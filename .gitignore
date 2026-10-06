@@ -3,3 +3,4 @@
 /Muxify.xcodeproj/
 .DS_Store
 xcuserdata/
+__pycache__/

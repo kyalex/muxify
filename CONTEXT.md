@@ -1,6 +1,6 @@
 # Muxify
 
-A personal macOS front end for tmux. It has a sidebar of tmux windows, a terminal showing the selected window, and a browser panel beside the terminal. tmux owns sessions, windows and panes; Muxify adds the browser.
+A personal macOS front end for tmux. It has a sidebar of tmux windows, a terminal showing the selected window, and a Right Panel for browsing the web or interacting with a simulated iPhone or iPad. tmux owns sessions, windows and panes; Muxify adds the Browser and Simulator.
 
 ## Language
 
@@ -21,12 +21,22 @@ _Avoid_: split, terminal
 ### Browser
 
 **Browser**:
-The web panel beside the terminal. Each Window has its own Browser, which remembers whether it is open and which Tabs it holds; switching Windows switches the Browser too.
+The web browsing view in the Right Panel. Each Window has its own Browser and Tabs; switching Windows switches the Browser too.
 _Avoid_: webview, inspector, sidebar browser
 
 **Tab**:
 One page in a Window's Browser, with its own back/forward history. "Tab" never means a tmux Window.
 _Avoid_: page (when you mean the Tab itself), browser window
+
+### Simulator
+
+**Simulator**:
+The interactive Device view in the Right Panel. It displays and controls one Device.
+_Avoid_: Device Hub, mirror, simulator runtime
+
+**Device**:
+A simulated iPhone or iPad used to run and test apps. In Muxify, a Device never means a physical phone or tablet.
+_Avoid_: simulator (when you mean the Device rather than its view), phone (when you also mean iPad)
 
 ### Agents
 
@@ -51,6 +61,10 @@ _Avoid_: integration, hook (when you mean the whole file), plugin (when you mean
 **Sidebar**:
 The panel on the left of the Muxify window that lists Sessions, Windows and Agents.
 _Avoid_: left sidebar, left panel
+
+**Right Panel**:
+The area beside the terminal that shows either the Browser or the Simulator, never both at once.
+_Avoid_: right sidebar, browser panel (when you mean the container)
 
 ### Configuration
 

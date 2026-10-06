@@ -2,35 +2,46 @@ APP := build/Build/Products/Debug/Muxify.app
 RELEASE_APP := build/Build/Products/Release/Muxify.app
 INSTALL_DIR ?= /Applications
 
-.PHONY: all setup tools project build test run install clean
+.PHONY: all setup tools project build test test-release run install release clean
 
 all: build
 
-setup: tools vendor/ghostty/lib/libghostty.a
+setup: tools
+	@if [ ! -f vendor/ghostty/lib/libghostty.a ] || \
+	    [ ! -f vendor/ghostty/include/ghostty.h ] || \
+	    [ ! -f vendor/ghostty/build-info.json ] || \
+	    [ ! -f vendor/ghostty/resources/terminfo/78/xterm-ghostty ] || \
+	    [ ! -d vendor/ghostty/resources/ghostty/themes ] || \
+	    [ ! -f vendor/ghostty/resources/ghostty/shell-integration/zsh/ghostty-integration ]; then \
+		./scripts/setup-ghostty.sh; \
+	fi
 
 tools:
 	command -v xcodegen >/dev/null || brew install xcodegen
-
-vendor/ghostty/lib/libghostty.a: | tools
-	./scripts/setup-ghostty.sh
 
 project: setup
 	xcodegen generate --quiet
 
 build: project
 	xcodebuild -project Muxify.xcodeproj -scheme Muxify -configuration Debug \
-		-derivedDataPath build -quiet build
+		-derivedDataPath build -clonedSourcePackagesDirPath build/SourcePackages -quiet build
 
 test: project
 	xcodebuild -project Muxify.xcodeproj -scheme Muxify -configuration Debug \
-		-derivedDataPath build test
+		-derivedDataPath build -clonedSourcePackagesDirPath build/SourcePackages test
+
+test-release:
+	python3 -m unittest discover -s Tests/ReleaseTests -v
 
 run: build
 	open $(APP)
 
+release:
+	BUILD_NUMBER="$(or $(BUILD_NUMBER),1)" ./scripts/package-release.sh "$(TAG)"
+
 install: project
 	xcodebuild -project Muxify.xcodeproj -scheme Muxify -configuration Release \
-		-derivedDataPath build -quiet build
+		-derivedDataPath build -clonedSourcePackagesDirPath build/SourcePackages -quiet build
 	rm -rf "$(INSTALL_DIR)/Muxify.app"
 	cp -R $(RELEASE_APP) "$(INSTALL_DIR)/"
 
