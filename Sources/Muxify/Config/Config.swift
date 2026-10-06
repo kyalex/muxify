@@ -66,7 +66,13 @@ struct Config: Equatable {
         #   # An action maps to one trigger or a list of them, spelled as in
         #   # Ghostty. Naming an action replaces its defaults, and [] leaves it
         #   # with no keybinding. A trigger listed here is taken from the
-        #   # defaults of other actions. The defaults:
+        #   # defaults of other actions.
+        #   # Keybindings work throughout Muxify, including in the Browser.
+        #   # select_window_1 through select_window_9 pick the first through
+        #   # ninth Windows in the current Session, not their tmux indices.
+        #   # select_next_window and select_prev_window wrap within the Session
+        #   # and have no keybindings until you assign them.
+        #   # The defaults:
         \(defaults.joined(separator: "\n"))
 
         """

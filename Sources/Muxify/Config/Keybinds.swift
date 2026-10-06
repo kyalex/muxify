@@ -2,6 +2,17 @@
 enum ConfigAction: String, CaseIterable {
     case toggleSidebar = "toggle_sidebar"
     case toggleBrowser = "toggle_browser"
+    case selectWindow1 = "select_window_1"
+    case selectWindow2 = "select_window_2"
+    case selectWindow3 = "select_window_3"
+    case selectWindow4 = "select_window_4"
+    case selectWindow5 = "select_window_5"
+    case selectWindow6 = "select_window_6"
+    case selectWindow7 = "select_window_7"
+    case selectWindow8 = "select_window_8"
+    case selectWindow9 = "select_window_9"
+    case selectNextWindow = "select_next_window"
+    case selectPrevWindow = "select_prev_window"
 }
 
 /// Muxify's keybinds: each action's triggers, in the order they were listed.
@@ -13,6 +24,17 @@ struct Keybinds: Equatable {
     static let defaultSpelling: KeyValuePairs<ConfigAction, [String]> = [
         .toggleSidebar: ["cmd+s", "ctrl+cmd+s"],
         .toggleBrowser: ["cmd+b"],
+        .selectWindow1: ["cmd+1"],
+        .selectWindow2: ["cmd+2"],
+        .selectWindow3: ["cmd+3"],
+        .selectWindow4: ["cmd+4"],
+        .selectWindow5: ["cmd+5"],
+        .selectWindow6: ["cmd+6"],
+        .selectWindow7: ["cmd+7"],
+        .selectWindow8: ["cmd+8"],
+        .selectWindow9: ["cmd+9"],
+        .selectNextWindow: [],
+        .selectPrevWindow: [],
     ]
 
     static let defaults = Keybinds(triggers: Dictionary(uniqueKeysWithValues: defaultSpelling.map { action, spellings in

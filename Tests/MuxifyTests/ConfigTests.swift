@@ -26,6 +26,108 @@ final class ConfigTests: XCTestCase {
         }
     }
 
+    func testNumberedWindowKeybindingsDefaultToCommandOneThroughNine() throws {
+        let actions: [ConfigAction] = [
+            .selectWindow1, .selectWindow2, .selectWindow3,
+            .selectWindow4, .selectWindow5, .selectWindow6,
+            .selectWindow7, .selectWindow8, .selectWindow9,
+        ]
+        for config in [try load([:]), try load("")] {
+            for (offset, action) in actions.enumerated() {
+                let key = trigger("cmd+\(offset + 1)")
+                XCTAssertEqual(config.keybinds.action(for: key), action)
+                XCTAssertEqual(config.keybinds.firstTrigger(for: action), key)
+            }
+        }
+    }
+
+    func testNumberedWindowKeybindingsCanBeRemappedOrDisabled() throws {
+        let config = try load("""
+        keybindings:
+          select_window_1: [alt+1, ctrl+cmd+digit_1]
+          select_window_2: []
+        """)
+        XCTAssertNil(config.keybinds.action(for: trigger("cmd+1")))
+        XCTAssertNil(config.keybinds.action(for: trigger("cmd+2")))
+        XCTAssertEqual(config.keybinds.action(for: trigger("alt+1")), .selectWindow1)
+        XCTAssertEqual(config.keybinds.action(for: trigger("ctrl+cmd+1")), .selectWindow1)
+        XCTAssertEqual(config.keybinds.firstTrigger(for: .selectWindow1), trigger("alt+1"))
+        XCTAssertNil(config.keybinds.firstTrigger(for: .selectWindow2))
+        XCTAssertEqual(config.keybinds.action(for: trigger("cmd+3")), .selectWindow3)
+        XCTAssertEqual(config.problems, [])
+    }
+
+    func testNumberedWindowDefaultsCanBeClaimedByAnotherAction() throws {
+        let config = try load("""
+        keybindings:
+          toggle_browser: cmd+1
+        """)
+        XCTAssertEqual(config.keybinds.action(for: trigger("cmd+1")), .toggleBrowser)
+        XCTAssertNil(config.keybinds.firstTrigger(for: .selectWindow1))
+        XCTAssertEqual(config.keybinds.action(for: trigger("cmd+2")), .selectWindow2)
+        XCTAssertEqual(config.problems, [])
+    }
+
+    func testNumberedWindowKeybindingsReportConflicts() throws {
+        let config = try load("""
+        keybindings:
+          select_window_1: cmd+e
+          select_window_2: cmd+e
+        """)
+        XCTAssertEqual(config.keybinds.action(for: trigger("cmd+e")), .selectWindow1)
+        XCTAssertNil(config.keybinds.firstTrigger(for: .selectWindow2))
+        XCTAssertEqual(config.problems, [
+            ConfigProblem(path: root, line: 3, message: "cmd+e is already bound to select_window_1"),
+        ])
+    }
+
+    func testNextAndPreviousWindowActionsAreUnboundByDefault() throws {
+        let config = try load([:])
+        for action in [ConfigAction.selectNextWindow, .selectPrevWindow] {
+            XCTAssertEqual(config.keybinds.triggers[action], [])
+            XCTAssertNil(config.keybinds.firstTrigger(for: action))
+        }
+        XCTAssertNil(config.keybinds.action(for: trigger("ctrl+cmd+right")))
+        XCTAssertNil(config.keybinds.action(for: trigger("ctrl+cmd+left")))
+        XCTAssertEqual(config.problems, [])
+    }
+
+    func testNextAndPreviousWindowActionsAcceptBindings() throws {
+        let config = try load("""
+        keybindings:
+          select_next_window: [ctrl+cmd+right, cmd+shift+right_bracket]
+          select_prev_window: ctrl+cmd+left
+        """)
+        XCTAssertEqual(config.keybinds.action(for: trigger("ctrl+cmd+right")), .selectNextWindow)
+        XCTAssertEqual(config.keybinds.action(for: trigger("cmd+shift+right_bracket")), .selectNextWindow)
+        XCTAssertEqual(config.keybinds.action(for: trigger("ctrl+cmd+left")), .selectPrevWindow)
+        XCTAssertEqual(config.keybinds.firstTrigger(for: .selectNextWindow), trigger("ctrl+cmd+right"))
+        XCTAssertEqual(config.keybinds.firstTrigger(for: .selectPrevWindow), trigger("ctrl+cmd+left"))
+        XCTAssertEqual(config.keybinds.action(for: trigger("cmd+1")), .selectWindow1)
+        XCTAssertEqual(config.problems, [])
+    }
+
+    func testNextAndPreviousWindowActionsCanBeExplicitlyDisabled() throws {
+        let config = try load("""
+        keybindings:
+          select_next_window: []
+          select_prev_window: []
+        """)
+        XCTAssertEqual(config.keybinds, Keybinds.defaults)
+        XCTAssertEqual(config.problems, [])
+    }
+
+    func testNextWindowActionCanClaimANumberedWindowDefault() throws {
+        let config = try load("""
+        keybindings:
+          select_next_window: cmd+1
+        """)
+        XCTAssertEqual(config.keybinds.action(for: trigger("cmd+1")), .selectNextWindow)
+        XCTAssertNil(config.keybinds.firstTrigger(for: .selectWindow1))
+        XCTAssertEqual(config.keybinds.action(for: trigger("cmd+2")), .selectWindow2)
+        XCTAssertEqual(config.problems, [])
+    }
+
     func testNamingAnActionReplacesItsDefaults() throws {
         let config = try load("""
         keybindings:
@@ -220,7 +322,9 @@ final class ConfigTests: XCTestCase {
     }
 
     func testTheKeybindingsTheTemplateShowsAreTheDefaults() throws {
-        let shown = Config.template.split(separator: "\n").filter { $0.hasPrefix("#   toggle_") }.map { $0.dropFirst() }
+        let shown = Config.template.split(separator: "\n").filter { line in
+            ConfigAction.allCases.contains { line.hasPrefix("#   \($0.rawValue):") }
+        }.map { $0.dropFirst() }
         XCTAssertEqual(shown.count, ConfigAction.allCases.count)
         let config = try load("keybindings:\n" + shown.joined(separator: "\n"))
         XCTAssertEqual(config.keybinds, Keybinds.defaults)

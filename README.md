@@ -56,3 +56,9 @@ Then open the installed app and, from the **Muxify** menu:
   `/hooks` and launch it with `codex --no-daemon`. Restart running Agents to
   load the Extension. See [extensions/README.md](extensions/README.md) for what
   each one does.
+
+## Keybindings
+
+Muxify's configurable keybindings work throughout the app, including in the
+Browser. See [Keybindings](docs/keybindings.md) for all actions, default
+shortcuts, a complete Config example, and built-in app and Browser shortcuts.

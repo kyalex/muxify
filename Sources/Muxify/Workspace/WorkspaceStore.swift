@@ -259,6 +259,17 @@ final class WorkspaceStore {
         switchClient(to: Target(window))
     }
 
+    /// Shared by Muxify keybinds and Ghostty's tab actions. Only the selected
+    /// Session's Windows participate, in the same order as the Sidebar.
+    private func navigateWindows(_ navigation: WindowNavigation) {
+        guard let current = selectedWindow else { return }
+        let siblings = windows.filter { $0.sessionID == current.sessionID }
+        guard let currentIndex = siblings.firstIndex(of: current),
+              let targetIndex = navigation.targetIndex(currentIndex: currentIndex, count: siblings.count)
+        else { return }
+        select(siblings[targetIndex])
+    }
+
     /// Shows the Session's current Window (`muxify session open <name>`).
     func selectSession(named name: String) {
         pendingSession = (name, Date().addingTimeInterval(5))
@@ -490,13 +501,24 @@ final class WorkspaceStore {
         switch action {
         case .toggleSidebar: toggleSidebar()
         case .toggleBrowser: toggleBrowser()
+        case .selectWindow1: navigateWindows(.position(1))
+        case .selectWindow2: navigateWindows(.position(2))
+        case .selectWindow3: navigateWindows(.position(3))
+        case .selectWindow4: navigateWindows(.position(4))
+        case .selectWindow5: navigateWindows(.position(5))
+        case .selectWindow6: navigateWindows(.position(6))
+        case .selectWindow7: navigateWindows(.position(7))
+        case .selectWindow8: navigateWindows(.position(8))
+        case .selectWindow9: navigateWindows(.position(9))
+        case .selectNextWindow: navigateWindows(.next)
+        case .selectPrevWindow: navigateWindows(.previous)
         }
     }
 
-    /// The Config's keybinds, which act before the terminal and the menu see
-    /// the key, so they win over Ghostty keybinds. Then shortcuts the menu
-    /// can't express: ⌘W closes a Tab when the Browser has focus and never
-    /// the app window (which would quit Muxify); ⌃Tab and ⌃⇧Tab switch Tabs.
+    /// The Config's keybinds, which act before the terminal, Browser and menu
+    /// see the key, so they win over Ghostty and page keybinds. Then shortcuts
+    /// the menu can't express: ⌘W closes a Tab when the Browser has focus and
+    /// never the app window (which would quit Muxify); ⌃Tab and ⌃⇧Tab switch Tabs.
     /// Other keys in the terminal are left to Ghostty/tmux bindings.
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -605,19 +627,12 @@ extension WorkspaceStore: GhosttyRuntimeDelegate {
     }
 
     func ghosttyGotoTab(_ tab: Int32) {
-        guard let current = selectedWindow else { return }
-        let siblings = windows.filter { $0.sessionID == current.sessionID }
-        guard let position = siblings.firstIndex(of: current), !siblings.isEmpty else { return }
-        let target: TmuxWindow
         switch tab {
-        case GHOSTTY_GOTO_TAB_PREVIOUS.rawValue: target = siblings[(position - 1 + siblings.count) % siblings.count]
-        case GHOSTTY_GOTO_TAB_NEXT.rawValue: target = siblings[(position + 1) % siblings.count]
-        case GHOSTTY_GOTO_TAB_LAST.rawValue: target = siblings[siblings.count - 1]
-        default:
-            guard tab >= 1, Int(tab) <= siblings.count else { return }
-            target = siblings[Int(tab) - 1]
+        case GHOSTTY_GOTO_TAB_PREVIOUS.rawValue: navigateWindows(.previous)
+        case GHOSTTY_GOTO_TAB_NEXT.rawValue: navigateWindows(.next)
+        case GHOSTTY_GOTO_TAB_LAST.rawValue: navigateWindows(.last)
+        default: navigateWindows(.position(Int(tab)))
         }
-        select(target)
     }
 
     func ghosttySurfaceClosed(_ view: TerminalSurfaceView) {

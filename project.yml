@@ -75,14 +75,15 @@ targets:
       - name: Bundle Ghostty resources
         script: "\"$PROJECT_DIR/scripts/bundle-ghostty-resources.sh\""
         basedOnDependencyAnalysis: false
-  # Tests the Config parser, compiled straight into the test bundle, so the
-  # tests run without launching Muxify (which would attach to tmux).
+  # Tests the Config parser and Window navigation, compiled straight into the
+  # test bundle, without launching Muxify (which would attach to tmux).
   MuxifyTests:
     type: bundle.unit-test
     platform: macOS
     sources:
       - path: Sources/Muxify/Config
         excludes: [ConfigStore.swift]
+      - path: Sources/Muxify/Workspace/WindowNavigation.swift
       - path: Tests/MuxifyTests
     dependencies:
       - package: Yams
