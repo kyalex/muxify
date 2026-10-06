@@ -19,6 +19,8 @@ struct ConfigSyntaxError: Error, Equatable {
 /// The Config: how Muxify itself behaves, read from a YAML file.
 struct Config: Equatable {
     var keybinds = Keybinds.defaults
+    /// Height of the app's header in points; at least 24 to fit its buttons.
+    var headerHeight: Double = 30
     /// The Ghostty config file the terminal loads on top of Ghostty's
     /// default files, as an absolute path.
     var ghosttyConfigFile: String?
@@ -61,6 +63,10 @@ struct Config: Equatable {
         #   # files. ~/ is the home directory; a relative path starts at the
         #   # directory of this file.
         #   config_file: ~/.config/ghostty/config
+        #
+        # ui:
+        #   # Header height in points (minimum 24). Changes apply live.
+        #   header_height: 30
         #
         # keybindings:
         #   # An action maps to one trigger or a list of them, spelled as in
@@ -120,6 +126,7 @@ private struct ConfigReader {
 
     static let sections: [String: (inout ConfigReader, Node) -> Void] = [
         "ghostty": { $0.readGhostty($1) },
+        "ui": { $0.readUI($1) },
         "keybindings": { $0.readKeybindings($1) },
     ]
 
@@ -147,6 +154,21 @@ private struct ConfigReader {
                 if read(file) == nil { problem(at: value, "ghostty.config_file \(file): not found") }
             default:
                 problem(at: key, "unknown key \"ghostty.\(name)\"")
+            }
+        }
+    }
+
+    mutating func readUI(_ node: Node) {
+        for (name, key, value) in entries(of: node, "ui") {
+            switch name {
+            case "header_height":
+                guard let height = value.float, height.isFinite, height >= 24 else {
+                    problem(at: value, "ui.header_height: expected a finite number of at least 24 points")
+                    continue
+                }
+                config.headerHeight = height
+            default:
+                problem(at: key, "unknown key \"ui.\(name)\"")
             }
         }
     }

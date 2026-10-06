@@ -21,9 +21,58 @@ final class ConfigTests: XCTestCase {
             XCTAssertEqual(config.keybinds.action(for: trigger("ctrl+cmd+s")), .toggleSidebar)
             XCTAssertEqual(config.keybinds.action(for: trigger("cmd+b")), .toggleBrowser)
             XCTAssertEqual(config.keybinds.firstTrigger(for: .toggleSidebar), trigger("cmd+s"))
+            XCTAssertEqual(config.headerHeight, 30)
             XCTAssertNil(config.ghosttyConfigFile)
             XCTAssertEqual(config.problems, [])
         }
+    }
+
+    func testHeaderHeightAcceptsWholeAndFractionalPoints() throws {
+        for height in [24.0, 26, 28, 28.5, 30, 40, 128] {
+            let config = try load("ui:\n  header_height: \(height)")
+            XCTAssertEqual(config.headerHeight, height)
+            XCTAssertEqual(config.keybinds, .defaults)
+            XCTAssertEqual(config.problems, [])
+        }
+    }
+
+    func testInvalidHeaderHeightUsesTheDefaultAndReportsTheLine() throws {
+        for value in ["23.99", "0", "-1", ".inf", "-.inf", ".nan", "1e309", "wrong", "false", "", "null", "[28]", "{height: 28}", "\"28\""] {
+            let config = try load("ui:\n  header_height: \(value)\nkeybindings:\n  toggle_sidebar: cmd+e")
+            XCTAssertEqual(config.headerHeight, 30, value)
+            XCTAssertEqual(config.keybinds.firstTrigger(for: .toggleSidebar), trigger("cmd+e"), value)
+            XCTAssertEqual(config.problems, [
+                ConfigProblem(path: root, line: 2, message: "ui.header_height: expected a finite number of at least 24 points"),
+            ], value)
+        }
+    }
+
+    func testUISectionRequiresAMappingAndReportsUnknownKeys() throws {
+        XCTAssertEqual(try load("ui: 28").problems, [
+            ConfigProblem(path: root, line: 1, message: "ui: expected a mapping"),
+        ])
+        let config = try load("ui:\n  header_height: 26\n  header_width: 80")
+        XCTAssertEqual(config.headerHeight, 26)
+        XCTAssertEqual(config.problems, [
+            ConfigProblem(path: root, line: 3, message: "unknown key \"ui.header_width\""),
+        ])
+    }
+
+    func testHeaderHeightReloadAndSyntaxErrorRecovery() throws {
+        var loaded = LoadedConfig()
+        loaded.update(with: Config.load(path: root) { _ in "ui:\n  header_height: 26" })
+        XCTAssertEqual(loaded.config.headerHeight, 26)
+        loaded.update(with: Config.load(path: root) { _ in "ui: [" })
+        XCTAssertEqual(loaded.config.headerHeight, 26)
+        XCTAssertEqual(loaded.problems.count, 1)
+        loaded.update(with: Config.load(path: root) { _ in "ui:\n  header_height: 32" })
+        XCTAssertEqual(loaded.config.headerHeight, 32)
+        XCTAssertEqual(loaded.problems, [])
+        loaded.update(with: Config.load(path: root) { _ in "keybindings: {}" })
+        XCTAssertEqual(loaded.config.headerHeight, 30)
+        loaded.update(with: Config.load(path: root) { _ in "ui:\n  header_height: 26" })
+        loaded.update(with: Config.load(path: root) { _ in nil })
+        XCTAssertEqual(loaded.config.headerHeight, 30)
     }
 
     func testNumberedWindowKeybindingsDefaultToCommandOneThroughNine() throws {
@@ -317,7 +366,18 @@ final class ConfigTests: XCTestCase {
     func testTheTemplateIsAValidConfigThatChangesNothing() throws {
         let config = try load(Config.template)
         XCTAssertEqual(config.keybinds, Keybinds.defaults)
+        XCTAssertEqual(config.headerHeight, 30)
         XCTAssertNil(config.ghosttyConfigFile)
+        XCTAssertEqual(config.problems, [])
+    }
+
+    func testTheHeaderHeightTheTemplateShowsIsTheDefault() throws {
+        let shown = Config.template.split(separator: "\n").filter { line in
+            line.hasPrefix("# ui:") || line.hasPrefix("#   header_height:")
+        }.map { $0.dropFirst(2) }
+        XCTAssertEqual(shown.count, 2)
+        let config = try load(shown.joined(separator: "\n"))
+        XCTAssertEqual(config.headerHeight, Config().headerHeight)
         XCTAssertEqual(config.problems, [])
     }
 

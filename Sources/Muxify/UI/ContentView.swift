@@ -40,17 +40,21 @@ struct ContentView: View {
                 ConfigProblemsBanner(configStore: configStore, theme: store.theme)
             }
         }
-        .padding(.top, TitlebarMetrics.height)
+        .padding(.top, headerHeight)
         // An overlay, so it is above everything for clicks: scroll views below
         // (sidebar list, tab strip) reach up under the title bar area and would
         // otherwise swallow clicks on the toggles.
-        .overlay(alignment: .top) { HeaderBar(store: store, keybinds: configStore.config.keybinds) }
+        .overlay(alignment: .top) {
+            HeaderBar(store: store, keybinds: configStore.config.keybinds, height: headerHeight)
+        }
         .ignoresSafeArea()
         // Names the window for the Window menu and Mission Control.
         .navigationTitle(store.selectedWindow?.sessionName ?? "Muxify")
         .onAppear { store.start() }
         .onOpenURL { store.handle($0) }
     }
+
+    private var headerHeight: CGFloat { CGFloat(configStore.config.headerHeight) }
 
     private func clamp(_ value: Double, _ low: Double, _ high: Double) -> Double {
         min(max(value, low), high)
@@ -62,6 +66,7 @@ struct ContentView: View {
 private struct HeaderBar: View {
     let store: WorkspaceStore
     let keybinds: Keybinds
+    let height: CGFloat
 
     var body: some View {
         let browserOpen = store.currentBrowser?.isOpen ?? false
@@ -82,7 +87,7 @@ private struct HeaderBar: View {
         }
         .padding(.leading, TitlebarMetrics.trafficLightsWidth)
         .padding(.trailing, 8)
-        .frame(height: TitlebarMetrics.height)
+        .frame(height: height)
         .background(WindowDragArea())
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -205,8 +210,6 @@ private struct TerminalHostRepresentable: NSViewRepresentable {
 // MARK: - Title bar controls
 
 enum TitlebarMetrics {
-    /// Height of the header; the traffic lights sit centred in it.
-    static let height: CGFloat = 30
     /// Room to leave on the leading edge for the traffic lights.
     static let trafficLightsWidth: CGFloat = 78
 }

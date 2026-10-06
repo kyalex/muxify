@@ -119,6 +119,21 @@ Then open the installed app and, from the **Muxify** menu:
   load the Extension. See [extensions/README.md](extensions/README.md) for what
   each one does.
 
+## Header height
+
+Set the main header's height in `~/.config/muxify/config.yaml` (or
+`$XDG_CONFIG_HOME/muxify/config.yaml`):
+
+```yaml
+ui:
+  header_height: 30
+```
+
+The height is in macOS points, defaults to 30, and must be a finite number of
+at least 24 so the buttons fit. Changes apply live. Removing the setting restores
+the default; invalid values use the default and appear in the Config problems
+banner. A YAML syntax error keeps the last good Config.
+
 ## Keybindings
 
 Muxify's configurable keybindings work throughout the app, including in the
