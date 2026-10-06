@@ -103,7 +103,8 @@ if lipo -info "$LIB" | grep -q 'Architectures in the fat file'; then
 else
   cp "$LIB" "$OUT/lib/libghostty.a"
 fi
-lipo -verify_arch "$ARCH" "$OUT/lib/libghostty.a"
+# Xcode 26 treats every argument after -verify_arch as an architecture.
+lipo "$OUT/lib/libghostty.a" -verify_arch "$ARCH"
 cp "$SLICE/Headers/ghostty.h" "$OUT/include/ghostty.h"
 cat > "$OUT/include/module.modulemap" <<'MAP'
 module GhosttyKit {

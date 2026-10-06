@@ -224,6 +224,37 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("GHOSTTY_RESOURCES", result.stderr)
 
+    def test_setup_verifies_library_with_xcode_26_lipo_argument_order(self):
+        framework = "GhosttyKit.xcframework/macos-arm64"
+        self.write(f"{framework}/libghostty-internal.a", "Library fixture\n")
+        self.write(f"{framework}/Headers/ghostty.h", "Header fixture\n")
+        for relative in [
+            "terminfo/78/xterm-ghostty",
+            "ghostty/themes/Example",
+            "ghostty/shell-integration/zsh/ghostty-integration",
+        ]:
+            self.write(f"resources/{relative}", "Resource fixture\n")
+        self.write("upstream-notices.txt", "License fixture\n")
+        self.env["GHOSTTYKIT"] = str(self.root / "GhosttyKit.xcframework")
+        self.env["GHOSTTY_RESOURCES"] = str(self.root / "resources")
+        self.env["GHOSTTY_NOTICES"] = str(self.root / "upstream-notices.txt")
+        self.env["ARCH"] = "arm64"
+        self.fake_tool("lipo", '''
+if [ "$1" = -info ]; then
+  echo "Non-fat file: $2 is architecture: arm64"
+elif [ "$#" = 3 ] && [ "$2" = -verify_arch ] && [ "$3" = arm64 ]; then
+  test -f "$1"
+else
+  echo "Input file must precede -verify_arch and its architecture arguments" >&2
+  exit 1
+fi
+''')
+        result = self.run_script("setup-ghostty.sh")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / "vendor/ghostty/include/ghostty.h").is_file())
+        self.assertTrue((self.root / "vendor/ghostty/resources/terminfo/78/xterm-ghostty").is_file())
+        self.assertTrue((self.root / "vendor/ghostty/build-info.json").is_file())
+
     def test_failed_ghostty_build_cannot_be_masked_by_command_substitution(self):
         source = self.root / "source"
         self.write("source/build.zig.zon", '.{ .minimum_zig_version = "0.16.0", }\n')
