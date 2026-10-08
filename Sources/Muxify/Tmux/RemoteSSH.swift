@@ -13,6 +13,7 @@ final class RemoteSSH {
     var markerOption: String { "@muxify_client_\(nonce)" }
     private var exitFile: URL { directory.appendingPathComponent("exit") }
     private var errorFile: URL { directory.appendingPathComponent("stderr") }
+    private var snapshotFile: URL { directory.appendingPathComponent("snapshot") }
 
     init(environment: RemoteEnvironment, temporaryDirectory: URL = FileManager.default.temporaryDirectory,
          sshExecutable: String = "/usr/bin/ssh") throws {
@@ -84,24 +85,27 @@ final class RemoteSSH {
         ])
     }
 
-    func terminalCommand(target: String? = nil) -> String {
-        terminalInvocation(target: target).commandLine
+    func terminalCommand(target: String? = nil, createSessionIfNeeded: Bool = true) -> String {
+        terminalInvocation(target: target, createSessionIfNeeded: createSessionIfNeeded).commandLine
     }
 
-    func terminalInvocation(target: String? = nil) -> CommandInvocation {
-        let ssh = attachmentInvocation(target: target)
-        // Keep SSH stdout on the original terminal (fd 3), logging only stderr.
-        // The pipeline is waited in full before exit, so even macOS bash 3.2
-        // finishes the logger before Ghostty reports the child closed.
+    func terminalInvocation(target: String? = nil, createSessionIfNeeded: Bool = true) -> CommandInvocation {
+        let ssh = attachmentInvocation(target: target, createSessionIfNeeded: createSessionIfNeeded)
+        // Stream stdout unchanged to the terminal (fd 3). SSH's remote PTY
+        // merges remote stderr into stdout, so retain only a bounded tail in
+        // memory and save just the nonce-framed final snapshot on exit.
+        // Both pipelines finish before Ghostty reports the child closed.
         // Prompts still read /dev/tty; save SSH's status, not tee/login's status.
         let script = """
         export SSH_ASKPASS_REQUIRE=never
         export TERM="${TERM:-xterm-256color}"
         exec 3>&1
         {
-            \(ssh.commandLine) 2>&1 >&3
-            printf '%s\\n' "$?" > \(Tmux.shellQuote(exitFile.path))
-        } | /usr/bin/tee \(Tmux.shellQuote(errorFile.path)) >&2
+            {
+                \(ssh.commandLine) 2>&1 >&4
+                printf '%s\\n' "$?" > \(Tmux.shellQuote(exitFile.path))
+            } | /usr/bin/tee \(Tmux.shellQuote(errorFile.path)) >&2
+        } 4>&1 | /usr/bin/tee /dev/fd/3 | /usr/bin/tail -c 1048576 | /usr/bin/tr -d '\\r' | /usr/bin/sed -n \(Tmux.shellQuote("/^\(snapshotStart)$/,/^\(snapshotEnd)$/p")) > \(Tmux.shellQuote(snapshotFile.path))
         status=$(cat \(Tmux.shellQuote(exitFile.path)))
         exit "${status:-255}"
         """
@@ -111,16 +115,45 @@ final class RemoteSSH {
     /// Reads the normal SSH config, including Host aliases and IdentityAgent
     /// (e.g. 1Password). Only our session/socket lifecycle and safety settings
     /// override it; background channels still cannot independently authenticate.
-    func attachmentInvocation(target: String? = nil) -> CommandInvocation {
+    func attachmentInvocation(target: String? = nil, createSessionIfNeeded: Bool = true) -> CommandInvocation {
         CommandInvocation(executable: sshExecutable, arguments: options + [
             "-tt", "-M", "-o", "ControlPersist=no",
-            "--", environment.host, "exec /bin/sh -c " + Tmux.shellQuote(bootstrap(target: target)),
+            "--", environment.host, "exec /bin/sh -c " + Tmux.shellQuote(bootstrap(target: target, createSessionIfNeeded: createSessionIfNeeded)),
         ])
     }
 
-    func bootstrap(target: String? = nil) -> String {
+    private var snapshotStart: String { "Muxify snapshot \(nonce)" }
+    private var snapshotEnd: String { "Muxify snapshot end \(nonce)" }
+
+    func bootstrap(target: String? = nil, createSessionIfNeeded: Bool = true) -> String {
         let targetSetup = target.map { "target=\(Tmux.shellQuote($0))" }
             ?? "target=$(tmux -u show-options -gqv \(Tmux.shellQuote(Tmux.lastWindowOption)) 2>/dev/null)"
+        let snapshotCommand = "tmux -u " + Tmux.snapshotArguments.map(Tmux.shellQuote).joined(separator: " ")
+        // An unsupported DCS is ignored by the renderer, so the handoff does
+        // not flash raw Session/Browser records in the terminal before exit.
+        let reportSnapshot = """
+        if snapshot=$(\(snapshotCommand) 2>/dev/null); then
+            printf '\\033Pmuxify;\\n%s\\n%s\\n%s\\n%s\\n\\033\\\\' \(Tmux.shellQuote(snapshotStart)) "${HOME}\(Tmux.separator)$(uname -n)" "$snapshot" \(Tmux.shellQuote(snapshotEnd)) >&2
+        elif absence=$(tmux -u has-session 2>&1); then
+            :
+        else
+            case "$absence" in
+                *"no server running"*|*"no sessions"*|*"error connecting"*"No such file or directory"*)
+                    printf '\\033Pmuxify;\\n%s\\n%s\\nempty\\n%s\\n\\033\\\\' \(Tmux.shellQuote(snapshotStart)) "${HOME}\(Tmux.separator)$(uname -n)" \(Tmux.shellQuote(snapshotEnd)) >&2 ;;
+            esac
+        fi
+        """
+        // A child owns the tmux client PID recorded in the marker. Its parent
+        // remains on the same foreground SSH/PTY to report inventory on exit.
+        let attachment = """
+        marker="$$\(Tmux.separator)$1\(Tmux.separator)${HOME}\(Tmux.separator)$(uname -n)"
+        tmux -u set-option -sq \(Tmux.shellQuote(markerOption)) "$marker" || exit $?
+        if [ -n "$2" ]; then
+            exec tmux -u -T RGB attach-session -t "$2"
+        else
+            exec tmux -u -T RGB attach-session
+        fi
+        """
         return """
         \(Self.remotePath)
         unset TMUX TMUX_PANE
@@ -145,25 +178,23 @@ final class RemoteSSH {
         fi
         export TERM COLORTERM=truecolor
         if ! tmux -u has-session 2>/dev/null; then
-            tmux -u new-session -d -s main -c "$HOME" || exit $?
+            \(createSessionIfNeeded ? "tmux -u new-session -d -s main -c \"$HOME\" || exit $?" : reportSnapshot + "\n    exit 0")
         fi
         \(targetSetup)
         if [ -n "$target" ] && ! tmux -u list-panes -t "$target" >/dev/null 2>&1; then target=; fi
+        \(createSessionIfNeeded ? "" : "if [ -z \"$target\" ]; then target=$(tmux -u list-windows -a -F '#{session_id}:#{window_id}' | head -n 1); fi")
         # Some SSH servers (including OrbStack) omit SSH_TTY despite -tt.
         client_tty=${SSH_TTY:-$(tty)}
         case "$client_tty" in
             /dev/*) ;;
             *) echo 'Muxify: the remote SSH connection did not provide a terminal.' >&2; exit 2;;
         esac
-        marker="$$\(Tmux.separator)${client_tty}\(Tmux.separator)${HOME}\(Tmux.separator)$(uname -n)"
-        tmux -u set-option -sq \(Tmux.shellQuote(markerOption)) "$marker" || exit $?
         # Our renderer supports RGB even if the fallback terminfo does not.
         # Advertise it for this client only, without rewriting server options.
-        if [ -n "$target" ]; then
-            exec tmux -u -T RGB attach-session -t "$target"
-        else
-            exec tmux -u -T RGB attach-session
-        fi
+        /bin/sh -c \(Tmux.shellQuote(attachment)) muxify "$client_tty" "$target"
+        status=$?
+        \(reportSnapshot)
+        exit "$status"
         """
     }
 
@@ -177,6 +208,29 @@ final class RemoteSSH {
         let text = (try? String(contentsOf: errorFile, encoding: .utf8)) ?? ""
         let lines = text.split(separator: "\n").map(String.init)
         return lines.suffix(4).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Accept only a complete report from a cleanly exited foreground owner.
+    /// A transport/authentication failure is never evidence of an empty server.
+    var closedSnapshot: TmuxSnapshot? {
+        guard exitStatus == 0, let text = try? String(contentsOf: snapshotFile, encoding: .utf8) else { return nil }
+        let lines = text.components(separatedBy: .newlines)
+        guard let start = lines.lastIndex(of: snapshotStart),
+              let end = lines[(start + 1)...].firstIndex(of: snapshotEnd), end > start + 2 else { return nil }
+        let metadata = lines[start + 1].components(separatedBy: Tmux.separator)
+        guard metadata.count == 2 else { return nil }
+        let payload = lines[(start + 2)..<end].joined(separator: "\n")
+        var snapshot = payload == "empty"
+            ? TmuxSnapshot(windows: [], clients: [], panes: [], lastWindowID: nil, serverRunning: false)
+            : Tmux.parseSnapshot(payload)
+        guard payload == "empty" || snapshot.serverID != nil else { return nil }
+        snapshot.homeDirectory = metadata[0]
+        for index in snapshot.windows.indices {
+            snapshot.windows[index].homeDirectory = metadata[0]
+            snapshot.windows[index].hostName = metadata[1]
+            snapshot.windows[index].isRemote = true
+        }
+        return snapshot
     }
 
     var shouldReconnect: Bool {

@@ -22,13 +22,18 @@ final class WorkspaceStore {
     private(set) var agents: [Agent] = []
     private(set) var serverRunning = true
     private(set) var selectedWindowID: String? {
-        didSet { rememberSelection() }
+        didSet {
+            windowRecovery.selected(selectedWindowID)
+            rememberSelection()
+        }
     }
     private(set) var surface: TerminalSurfaceView?
     private(set) var terminalMessage: String?
     private(set) var activeEnvironment: RemoteEnvironment?
     private(set) var environmentStatus = "Local"
     private(set) var isConnected = false
+    /// True only after a successful inventory, never inferred from an SSH error.
+    private(set) var hasNoSessions = false
     var remoteEnvironments: [RemoteEnvironment] { configStore.config.remoteEnvironments }
     var isRemote: Bool { activeEnvironment != nil }
     var environmentName: String { activeEnvironment?.name ?? "Local" }
@@ -95,6 +100,10 @@ final class WorkspaceStore {
     @ObservationIgnored private var isTransitioning = false
     @ObservationIgnored private var reconnectWork: DispatchWorkItem?
     @ObservationIgnored private var reconnectAttempt = 0
+    @ObservationIgnored private var windowRecovery = WindowRecovery()
+    @ObservationIgnored private var recoveryPending = false
+    @ObservationIgnored private var attachmentTarget: Target?
+    @ObservationIgnored private var createSessionIfNeeded = true
     @ObservationIgnored private var serverID: String?
     @ObservationIgnored private var homeDirectory = NSHomeDirectory()
     @ObservationIgnored private var isShuttingDown = false
@@ -148,9 +157,11 @@ final class WorkspaceStore {
 
     /// Reconnect after transport/config changes. Environment clicks instead
     /// open or focus another App Window through the app coordinator.
-    private func transition(to next: RemoteEnvironment?) {
+    private func transition(to next: RemoteEnvironment?, target: Target? = nil, createSessionIfNeeded: Bool = true) {
         guard !isShuttingDown else { return }
         activeEnvironment = next
+        attachmentTarget = target
+        self.createSessionIfNeeded = createSessionIfNeeded
         generation = UUID()
         reconnectWork?.cancel()
         reconnectWork = nil
@@ -197,7 +208,7 @@ final class WorkspaceStore {
         }
         if isRemote {
             environmentStatus = "Connecting to \(environmentName)…"
-            attach(to: nil)
+            attach(to: attachmentTarget, createSessionIfNeeded: createSessionIfNeeded)
         } else {
             environmentStatus = "Local"
             isConnected = true
@@ -216,6 +227,9 @@ final class WorkspaceStore {
         windows = []
         agents = []
         selectedWindowID = nil
+        windowRecovery = WindowRecovery()
+        recoveryPending = false
+        hasNoSessions = false
         rememberedWindowID = nil
         clientTTY = nil
         serverID = nil
@@ -276,6 +290,9 @@ final class WorkspaceStore {
 
     func refresh(attachIfNeeded: Bool = false) {
         guard let connection, !isTransitioning else { return }
+        // A closed remote master cannot be polled. Its foreground owner reports
+        // a final snapshot; a new attachment owns all subsequent operations.
+        guard !isRemote || surface != nil else { return }
         guard !isRefreshing else {
             refreshAgain = true
             return
@@ -285,7 +302,7 @@ final class WorkspaceStore {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try connection.snapshot() }
             DispatchQueue.main.async {
-                guard let self, self.generation == current else { return }
+                guard let self, self.generation == current, !self.isRemote || self.surface != nil else { return }
                 self.isRefreshing = false
                 switch result {
                 case .success(let snapshot):
@@ -300,6 +317,7 @@ final class WorkspaceStore {
                     self.apply(snapshot, attachIfNeeded: attachIfNeeded)
                 case .failure(let error):
                     self.isConnected = false
+                    if !self.isRemote, self.surface == nil { self.terminalMessage = String(describing: error) }
                     if error as? TmuxError != .notReady {
                         self.environmentStatus = "Waiting for \(self.environmentName): \(error)"
                     }
@@ -312,14 +330,9 @@ final class WorkspaceStore {
         }
     }
 
-    /// tmux told us something changed. A Window switch in the Session we are
-    /// showing moves the selection right away; the snapshot fills in the rest.
+    /// Resolve switches against a fresh inventory. A close may also emit a
+    /// Window switch; following it early would lose our previous-Window fallback.
     private func handle(_ event: TmuxEvents.Event) {
-        if case .sessionWindowChanged(let sessionID, let windowID) = event,
-           pendingSelection == nil, selectedWindow?.sessionID == sessionID,
-           windows.contains(where: { $0.id == windowID }) {
-            selectedWindowID = windowID
-        }
         refresh()
     }
 
@@ -338,15 +351,36 @@ final class WorkspaceStore {
             dirtyBrowsers.removeAll()
         }
         if windows != snapshot.windows { windows = snapshot.windows }
+        hasNoSessions = snapshot.windows.isEmpty
         let agents = snapshot.agents
         if self.agents != agents { self.agents = agents }
         if serverRunning != snapshot.serverRunning { serverRunning = snapshot.serverRunning }
+        let ownTTY = clientTTY ?? (isRemote ? nil : surface?.ttyName)
+        if recoveryPending, let ownTTY,
+           snapshot.clients.contains(where: { $0.tty == ownTTY && $0.windowID == selectedWindowID }) {
+            recoveryPending = false
+        }
 
         if attachIfNeeded, surface == nil {
             rememberedWindowID = snapshot.lastWindowID
             let last = snapshot.lastWindowID.flatMap { id in snapshot.windows.first { $0.id == id } }
             let requested = takePendingSession(in: snapshot.windows)
             attach(to: (requested ?? last ?? Self.initialWindow(in: snapshot.windows)).map(Target.init))
+        } else if recoveryPending || windowRecovery.selectionDisappeared(in: windows) {
+            let target = recoveryPending ? selectedWindow ?? windowRecovery.fallback(in: windows) : windowRecovery.fallback(in: windows)
+            pendingSelection = nil
+            if let target {
+                recoveryPending = true
+                if isRemote, surface == nil || surface?.processExited == true {
+                    transition(to: activeEnvironment, target: Target(target), createSessionIfNeeded: false)
+                    return
+                }
+                switchClient(to: Target(target))
+            } else {
+                selectedWindowID = nil
+                recoveryPending = false
+                windowRecovery = WindowRecovery()
+            }
         } else {
             followClient(snapshot.clients)
             if surface != nil, let window = takePendingSession(in: windows) { select(window) }
@@ -355,7 +389,7 @@ final class WorkspaceStore {
         updateUnread(snapshot.panes)
 
         // (Re)start listening once there is a Session to attach to.
-        if snapshot.serverRunning, !events.isRunning,
+        if snapshot.serverRunning, isConnected, !events.isRunning,
            let sessionID = selectedWindow?.sessionID ?? windows.first?.sessionID {
             if let connection { events.start(sessionID: sessionID, connection: connection) }
         }
@@ -378,6 +412,7 @@ final class WorkspaceStore {
             if let pending = pendingSelection, client.windowID == pending.windowID || Date() > pending.deadline {
                 pendingSelection = nil
             }
+            if client.windowID == selectedWindowID { recoveryPending = false }
             if pendingSelection == nil, selectedWindowID != client.windowID {
                 selectedWindowID = client.windowID
             }
@@ -420,10 +455,10 @@ final class WorkspaceStore {
     }
 
     /// Starts our tmux client on `target`, or a fresh session if there is none.
-    private func attach(to target: Target?) {
+    private func attach(to target: Target?, createSessionIfNeeded: Bool = true) {
         let args = target.map { ["-u", "attach-session", "-t", $0.tmuxTarget] }
             ?? ["-u", "new-session", "-A", "-s", "main", "-c", NSHomeDirectory()]
-        guard let connection, let command = try? connection.terminalCommand(args, target: target?.tmuxTarget),
+        guard let connection, let command = try? connection.terminalCommand(args, target: target?.tmuxTarget, createSessionIfNeeded: createSessionIfNeeded),
               let view = TerminalSurfaceView(command: command, workingDirectory: isRemote ? nil : target?.path, delegate: self)
         else {
             terminalMessage = "Could not start the terminal."
@@ -433,6 +468,7 @@ final class WorkspaceStore {
         surface = view
         clientTTY = nil
         terminalMessage = nil
+        hasNoSessions = false
         selectedWindowID = target?.windowID
         if let target { pendingSelection = (target.windowID, Date().addingTimeInterval(3)) }
         terminalHost.show(view)
@@ -886,10 +922,24 @@ extension WorkspaceStore: @preconcurrency GhosttyRuntimeDelegate {
         clientTTY = nil
         terminalHost.show(nil)
         if let remote = connection?.remote {
+            // Any snapshot submitted before exit belongs to the old live
+            // attachment and must not overwrite the final inventory.
+            isRefreshing = false
+            refreshAgain = false
             events.stop()
             isConnected = false
             let message = remote.failureMessage
             if remote.exitStatus == 0 {
+                if let snapshot = connection?.closedSnapshot {
+                    terminalMessage = nil
+                    apply(snapshot, attachIfNeeded: false)
+                    // apply may have started a recovery on another connection.
+                    if isTransitioning { return }
+                    if hasNoSessions {
+                        environmentStatus = "No tmux Sessions in \(environmentName)"
+                        return
+                    }
+                }
                 environmentStatus = "Detached from \(environmentName)"
                 terminalMessage = "Detached from remote tmux."
             } else {
@@ -903,7 +953,7 @@ extension WorkspaceStore: @preconcurrency GhosttyRuntimeDelegate {
                 let current = generation
                 let work = DispatchWorkItem { [weak self] in
                     guard let self, self.generation == current else { return }
-                    self.transition(to: self.activeEnvironment)
+                    self.transition(to: self.activeEnvironment, createSessionIfNeeded: false)
                 }
                 reconnectWork = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)

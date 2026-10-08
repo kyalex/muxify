@@ -188,15 +188,16 @@ private struct TerminalArea: View {
                 Text(message).foregroundStyle(.secondary).textSelection(.enabled)
                 if store.isRemote {
                     Text(store.environmentStatus).font(.caption).foregroundStyle(.secondary)
-                    Button("Reconnect") { store.reattach() }
+                    Button("Retry Connection") { store.reattach() }
                 }
+            } else if store.hasNoSessions {
+                Text(store.serverRunning ? "No tmux Sessions" : "tmux server is not running")
+                    .foregroundStyle(.secondary)
+                Button("Reconnect") { store.reattach() }
+                    .keyboardShortcut(.defaultAction)
             } else if store.isRemote, !store.isConnected {
                 Text(store.environmentStatus).foregroundStyle(.secondary)
                 ProgressView().controlSize(.small)
-            } else if store.windows.isEmpty {
-                Text(store.serverRunning ? "No tmux windows" : "tmux server is not running")
-                    .foregroundStyle(.secondary)
-                Button("New tmux Session") { store.newSession() }
             } else {
                 Text("Detached from tmux").foregroundStyle(.secondary)
                 Button("Reattach") { store.reattach() }

@@ -169,6 +169,20 @@ enum TmuxError: Error, Equatable, CustomStringConvertible {
     case timedOut
     case notReady
 
+    /// Permission errors and timeouts are not evidence that Sessions are gone.
+    var indicatesNoSessions: Bool {
+        guard case .failed(_, let stderr) = self else { return false }
+        let message = stderr.lowercased()
+        return message.contains("no sessions") || indicatesNoServer
+    }
+
+    var indicatesNoServer: Bool {
+        guard case .failed(_, let stderr) = self else { return false }
+        let message = stderr.lowercased()
+        return message.contains("no server running")
+            || (message.contains("error connecting") && message.contains("no such file or directory"))
+    }
+
     var description: String {
         switch self {
         case .notInstalled: return "tmux was not found on this Mac"
@@ -225,6 +239,12 @@ enum Tmux {
     /// One round trip that lists every window on the server, every client and
     /// every pane (for the Agents in them).
     static func readSnapshot(using execute: ([String]) throws -> String) throws -> TmuxSnapshot {
+        parseSnapshot(try execute(snapshotArguments))
+    }
+
+    /// Also used by the foreground SSH owner to report the final inventory
+    /// before its master closes. No independent SSH probe is needed on exit.
+    static var snapshotArguments: [String] {
         let s = separator
         let windowFormat = [
             "W", "#{window_id}", "#{session_id}", "#{session_name}", "#{window_index}",
@@ -239,13 +259,12 @@ enum Tmux {
             "#{\(agentOption)}", "#{\(agentStatusOption)}", "#{\(agentUnreadOption)}",
         ].joined(separator: s)
 
-        let output = try execute([
-                "list-windows", "-a", "-F", windowFormat,
-                ";", "list-clients", "-F", clientFormat,
-                ";", "list-panes", "-a", "-F", paneFormat,
-                ";", "display-message", "-p", "-F", "S\(s)#{pid}",
-            ])
-        return parseSnapshot(output)
+        return [
+            "list-windows", "-a", "-F", windowFormat,
+            ";", "list-clients", "-F", clientFormat,
+            ";", "list-panes", "-a", "-F", paneFormat,
+            ";", "display-message", "-p", "-F", "S\(s)#{pid}",
+        ]
     }
 
     /// Pure parser, shared by live snapshots and persistence/migration tests.

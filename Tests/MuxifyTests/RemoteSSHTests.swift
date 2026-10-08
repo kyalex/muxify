@@ -213,4 +213,43 @@ final class RemoteSSHTests: XCTestCase {
         XCTAssertEqual(ssh.exitStatus, 255)
         XCTAssertTrue(ssh.shouldReconnect)
     }
+
+    func testFinalSnapshotIsCapturedFromPtyStdoutWithoutSavingTerminalOutput() throws {
+        let directory = try TestDirectory()
+        let fake = directory.url.appendingPathComponent("ssh")
+        let ssh = try RemoteSSH(environment: RemoteEnvironment(name: "fake", host: "unused", username: "unused"),
+                                temporaryDirectory: directory.url, sshExecutable: fake.path)
+        let report = "Muxify snapshot \(ssh.nonce)\n/home/test\(Tmux.separator)host\nempty\nMuxify snapshot end \(ssh.nonce)\n"
+        try ("#!/bin/sh\nprintf pane-output\nprintf '%s' " + Tmux.shellQuote("\n" + report) + "\n")
+            .write(to: fake, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
+        XCTAssertEqual(try CommandRunner().run(ssh.terminalInvocation()), "pane-output\n" + report)
+        let snapshot = try XCTUnwrap(ssh.closedSnapshot)
+        XCTAssertFalse(snapshot.serverRunning)
+        XCTAssertTrue(snapshot.windows.isEmpty)
+        XCTAssertEqual(snapshot.homeDirectory, "/home/test")
+        XCTAssertEqual(ssh.failureMessage, "")
+        XCTAssertFalse(try String(contentsOf: ssh.directory.appendingPathComponent("snapshot"), encoding: .utf8).contains("pane-output"))
+        try "255".write(to: ssh.directory.appendingPathComponent("exit"), atomically: true, encoding: .utf8)
+        XCTAssertNil(ssh.closedSnapshot, "A network failure must not report an empty tmux server")
+    }
+
+    func testIncompleteSnapshotCannotBeMistakenForNoSessions() throws {
+        let directory = try TestDirectory()
+        let ssh = try remote(in: directory)
+        try "0".write(to: ssh.directory.appendingPathComponent("exit"), atomically: true, encoding: .utf8)
+        try "Muxify snapshot \(ssh.nonce)\n/home/test\(Tmux.separator)host\nempty\n"
+            .write(to: ssh.directory.appendingPathComponent("snapshot"), atomically: true, encoding: .utf8)
+        XCTAssertNil(ssh.closedSnapshot)
+    }
+
+    func testRecoveryDoesNotCreateMainAutomatically() throws {
+        let directory = try TestDirectory()
+        let ssh = try remote(in: directory)
+        let script = ssh.bootstrap(target: "$1:@1", createSessionIfNeeded: false)
+        XCTAssertFalse(script.contains("new-session"))
+        XCTAssertTrue(script.contains("list-windows -a -F '#{session_id}:#{window_id}' | head -n 1"))
+        XCTAssertNoThrow(try CommandRunner().run(CommandInvocation(executable: "/bin/sh", arguments: ["-n", "-c", script])))
+        XCTAssertTrue(ssh.bootstrap().contains("new-session -d -s main"), "Explicit reconnect can create main")
+    }
 }

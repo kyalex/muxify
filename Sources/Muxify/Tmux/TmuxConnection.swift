@@ -40,7 +40,9 @@ final class TmuxConnection {
     func snapshot() throws -> TmuxSnapshot {
         guard let remote else {
             do { return stamped(try Tmux.readSnapshot(using: run)) }
-            catch { return TmuxSnapshot(windows: [], clients: [], panes: [], lastWindowID: nil, serverRunning: false) }
+            catch let error as TmuxError where error.indicatesNoSessions {
+                return TmuxSnapshot(windows: [], clients: [], panes: [], lastWindowID: nil, serverRunning: !error.indicatesNoServer)
+            }
         }
         guard (try? runner.run(remote.control("check"), timeout: 1)) != nil else { throw TmuxError.notReady }
         let marker = try run(["show-option", "-sqv", remote.markerOption])
@@ -68,8 +70,10 @@ final class TmuxConnection {
         return snapshot
     }
 
-    func terminalCommand(_ args: [String], target: String? = nil) throws -> String {
-        if let remote { return remote.terminalCommand(target: target) }
+    var closedSnapshot: TmuxSnapshot? { remote?.closedSnapshot.map(stamped) }
+
+    func terminalCommand(_ args: [String], target: String? = nil, createSessionIfNeeded: Bool = true) throws -> String {
+        if let remote { return remote.terminalCommand(target: target, createSessionIfNeeded: createSessionIfNeeded) }
         return try invocation(args).commandLine
     }
 
