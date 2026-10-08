@@ -21,6 +21,10 @@ final class ConfigTests: XCTestCase {
             XCTAssertEqual(config.keybinds.action(for: trigger("ctrl+cmd+s")), .toggleSidebar)
             XCTAssertEqual(config.keybinds.action(for: trigger("cmd+b")), .toggleBrowser)
             XCTAssertEqual(config.keybinds.action(for: trigger("cmd+n")), .newAppWindow)
+            XCTAssertEqual(config.keybinds.action(for: trigger("ctrl+backquote")), .focusTerminal)
+            XCTAssertEqual(config.keybinds.firstTrigger(for: .focusTerminal), trigger("ctrl+backquote"))
+            XCTAssertNil(config.keybinds.action(for: trigger("cmd+backquote")))
+            XCTAssertNil(config.keybinds.action(for: trigger("cmd+shift+backquote")))
             XCTAssertNil(config.keybinds.action(for: trigger("cmd+shift+b")))
             XCTAssertEqual(config.keybinds.firstTrigger(for: .toggleSidebar), trigger("cmd+s"))
             XCTAssertEqual(config.headerHeight, 30)
@@ -64,6 +68,43 @@ final class ConfigTests: XCTestCase {
                 ConfigProblem(path: root, line: 2, message: "ui.header_height: expected a finite number of at least 24 points"),
             ], value)
         }
+    }
+
+    func testFocusTerminalCanBeRemappedToMultipleShortcutsOrDisabled() throws {
+        let remapped = try load("keybindings:\n  focus_terminal: [ctrl+cmd+t, cmd+backquote]")
+        XCTAssertNil(remapped.keybinds.action(for: trigger("ctrl+backquote")))
+        XCTAssertEqual(remapped.keybinds.action(for: trigger("ctrl+cmd+t")), .focusTerminal)
+        XCTAssertEqual(remapped.keybinds.action(for: trigger("cmd+backquote")), .focusTerminal)
+        XCTAssertEqual(remapped.keybinds.firstTrigger(for: .focusTerminal), trigger("ctrl+cmd+t"))
+
+        let disabled = try load("keybindings:\n  focus_terminal: []")
+        XCTAssertNil(disabled.keybinds.firstTrigger(for: .focusTerminal))
+        XCTAssertNil(disabled.keybinds.action(for: trigger("ctrl+backquote")))
+        XCTAssertNil(disabled.keybinds.action(for: trigger("cmd+backquote")))
+        for config in [remapped, disabled] {
+            XCTAssertEqual(config.keybinds.action(for: trigger("cmd+b")), .toggleBrowser)
+            XCTAssertEqual(config.problems, [])
+        }
+    }
+
+    func testFocusTerminalDefaultCanBeClaimedByAnotherAction() throws {
+        let config = try load("keybindings:\n  toggle_browser: ctrl+backquote")
+        XCTAssertEqual(config.keybinds.action(for: trigger("ctrl+backquote")), .toggleBrowser)
+        XCTAssertNil(config.keybinds.firstTrigger(for: .focusTerminal))
+        XCTAssertEqual(config.problems, [])
+    }
+
+    func testFocusTerminalReportsShortcutConflicts() throws {
+        let config = try load("""
+        keybindings:
+          toggle_browser: ctrl+cmd+t
+          focus_terminal: [ctrl+cmd+t, ctrl+backquote]
+        """)
+        XCTAssertEqual(config.keybinds.action(for: trigger("ctrl+cmd+t")), .toggleBrowser)
+        XCTAssertEqual(config.keybinds.firstTrigger(for: .focusTerminal), trigger("ctrl+backquote"))
+        XCTAssertEqual(config.problems, [
+            ConfigProblem(path: root, line: 3, message: "ctrl+cmd+t is already bound to toggle_browser"),
+        ])
     }
 
     func testUISectionRequiresAMappingAndReportsUnknownKeys() throws {

@@ -84,6 +84,8 @@ struct Config: Equatable {
         #   # with no keybinding. A trigger listed here is taken from the
         #   # defaults of other actions.
         #   # Keybindings work throughout Muxify, including in the Browser.
+        #   # focus_terminal uses Ctrl+backquote, leaving Cmd+backquote for
+        #   # macOS App Window switching unless you explicitly bind it here.
         #   # select_window_1 through select_window_9 pick the first through
         #   # ninth Windows in the current Session, not their tmux indices.
         #   # select_next_window and select_prev_window wrap within the Session

@@ -224,10 +224,48 @@ final class AppWindowsTests: XCTestCase {
         }
     }
 
-    @MainActor private func keyEvent(window: NSWindow, flags: NSEvent.ModifierFlags) throws -> NSEvent {
+    @MainActor func testFocusTerminalKeybindingRoutesOnlyItsWindowAndAppliesLiveOverrides() throws {
+        try withWindows { windows, path in
+            let first = windows.store(for: AppWindowRequest())
+            let second = windows.store(for: AppWindowRequest(environmentName: "Home"))
+            let native = FocusWindow()
+            native.contentView = first.terminalHost
+            defer { native.contentView = nil }
+            // A text responder represents Browser/address-bar focus, without
+            // starting Ghostty, WebKit or a tmux connection.
+            let text = NSTextView(frame: native.contentView!.bounds)
+            first.terminalHost.addSubview(text)
+            XCTAssertTrue(native.makeFirstResponder(text))
+            let controlBackquote = try keyEvent(window: native, flags: .control, characters: "`", keyCode: 0x32)
+            XCTAssertTrue(second.handleKeyEvent(controlBackquote) === controlBackquote)
+            XCTAssertNil(first.handleKeyEvent(controlBackquote))
+            let commandBackquote = try keyEvent(window: native, flags: .command, characters: "`", keyCode: 0x32)
+            let reverseCycle = try keyEvent(window: native, flags: [.command, .shift], characters: "~", keyCode: 0x32)
+            XCTAssertTrue(first.handleKeyEvent(commandBackquote) === commandBackquote)
+            XCTAssertTrue(first.handleKeyEvent(reverseCycle) === reverseCycle)
+
+            try (Self.config + "\nkeybindings:\n  focus_terminal: [ctrl+cmd+t, cmd+backquote]\n")
+                .write(toFile: path, atomically: true, encoding: .utf8)
+            windows.configStore.reload()
+            XCTAssertTrue(first.handleKeyEvent(controlBackquote) === controlBackquote)
+            let remapped = try keyEvent(window: native, flags: [.control, .command], characters: "t", keyCode: 0x11)
+            XCTAssertNil(first.handleKeyEvent(remapped))
+            XCTAssertNil(first.handleKeyEvent(commandBackquote), "An explicit binding may reclaim the old shortcut")
+
+            try (Self.config + "\nkeybindings:\n  focus_terminal: []\n")
+                .write(toFile: path, atomically: true, encoding: .utf8)
+            windows.configStore.reload()
+            for event in [controlBackquote, commandBackquote, reverseCycle, remapped] {
+                XCTAssertTrue(first.handleKeyEvent(event) === event, "No hardcoded fallback after disabling")
+            }
+        }
+    }
+
+    @MainActor private func keyEvent(window: NSWindow, flags: NSEvent.ModifierFlags,
+                                    characters: String = "n", keyCode: UInt16 = 0x2D) throws -> NSEvent {
         try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
                                       timestamp: 0, windowNumber: window.windowNumber, context: nil,
-                                      characters: "n", charactersIgnoringModifiers: "n", isARepeat: false, keyCode: 0x2D))
+                                      characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode))
     }
 
     @MainActor private func withWindows(_ body: (AppWindows, String) throws -> Void) throws {

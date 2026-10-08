@@ -3,6 +3,7 @@ enum ConfigAction: String, CaseIterable {
     case newAppWindow = "new_app_window"
     case toggleSidebar = "toggle_sidebar"
     case toggleBrowser = "toggle_browser"
+    case focusTerminal = "focus_terminal"
     case selectWindow1 = "select_window_1"
     case selectWindow2 = "select_window_2"
     case selectWindow3 = "select_window_3"
@@ -26,6 +27,7 @@ struct Keybinds: Equatable {
         .newAppWindow: ["cmd+n"],
         .toggleSidebar: ["cmd+s", "ctrl+cmd+s"],
         .toggleBrowser: ["cmd+b"],
+        .focusTerminal: ["ctrl+backquote"],
         .selectWindow1: ["cmd+1"],
         .selectWindow2: ["cmd+2"],
         .selectWindow3: ["cmd+3"],

@@ -10,6 +10,7 @@ address bar has focus. All available `keybindings` actions are listed below.
 | `new_app_window` | ⌘N | Open a new Local Muxify App Window |
 | `toggle_sidebar` | ⌘S, ⌃⌘S | Show or hide the Sidebar |
 | `toggle_browser` | ⌘B | Show or hide the current Window's Browser |
+| `focus_terminal` | ⌃ + backquote | Focus the terminal in the current App Window |
 | `select_window_1` | ⌘1 | Select the first Window in the current Session |
 | `select_window_2` | ⌘2 | Select the second Window |
 | `select_window_3` | ⌘3 | Select the third Window |
@@ -36,6 +37,7 @@ keybindings:
   new_app_window: cmd+n
   toggle_sidebar: [cmd+s, ctrl+cmd+s]
   toggle_browser: cmd+b
+  focus_terminal: ctrl+backquote
   select_window_1: cmd+1
   select_window_2: cmd+2
   select_window_3: cmd+3
@@ -67,6 +69,11 @@ To change New App Window, use `new_app_window: cmd+shift+n`; use
 `new_app_window: []` to disable its shortcuts. This also removes the terminal's
 default ⌘N behavior. New tmux Session remains available from the File menu.
 
+Focus Terminal defaults to Control + backquote, leaving Command + backquote
+for macOS App Window switching. Use `focus_terminal: []` to disable it, or
+`focus_terminal: cmd+backquote` to restore the old shortcut at the cost of native
+App Window switching.
+
 ## Built-in shortcuts
 
 These shortcuts are not configurable as actions in Muxify's `keybindings`
@@ -75,7 +82,7 @@ terminal has focus, Ghostty bindings can take precedence over menu shortcuts.
 
 | Shortcut | Action |
 | --- | --- |
-| ⌘ + backquote | Focus the terminal |
+| ⌘ + backquote / ⌘⇧ + backquote | Cycle App Windows forward / backward (macOS) |
 | ⌘⇧, | Reload the Muxify Config and Ghostty config |
 
 **Browser shortcuts** apply when the Browser has focus. Menu clicks work even

@@ -58,7 +58,8 @@ import SwiftUI
                 .keyboardShortcut("r", modifiers: .command)
             Divider()
             Button("Focus Terminal") { store?.focusTerminal() }
-                .keyboardShortcut("`", modifiers: .command)
+                .keyboardShortcut(keybinds.firstTrigger(for: .focusTerminal)?.shortcut)
+                .disabled(store == nil)
         }
         CommandGroup(after: .appSettings) {
             Button("Open Config") { configStore.openInEditor() }

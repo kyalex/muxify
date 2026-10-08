@@ -730,6 +730,7 @@ final class WorkspaceStore {
         case .newAppWindow: onNewAppWindow?()
         case .toggleSidebar: toggleSidebar()
         case .toggleBrowser: toggleBrowser()
+        case .focusTerminal: focusTerminal()
         case .selectWindow1: navigateWindows(.position(1))
         case .selectWindow2: navigateWindows(.position(2))
         case .selectWindow3: navigateWindows(.position(3))
