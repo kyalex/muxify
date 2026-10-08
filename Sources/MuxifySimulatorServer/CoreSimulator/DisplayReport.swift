@@ -44,24 +44,22 @@ struct DisplayReport: Sendable {
             throw CoreSimulatorError.privateCall(symbol: "displayinfo", message: "the report lists too many displays")
         }
         let carriesLayoutActivity = records.contains { XPCValue.bool($0, "active") != nil }
-        // iOS 26.5 under Xcode 27 identifies displays by displayId, marks the
-        // active built-in display as primary, and reports backlight at the top level.
-        // Keep the newer per-panel format strict rather than mixing the two schemas.
-        let legacy = !carriesLayoutActivity && records.allSatisfy { XPCValue.string($0, "uniqueId") == nil }
+        let carriesPanelBacklight = records.contains { xpc_dictionary_get_value($0, "backlightState") != nil }
+        // iOS 26.5 and 27 both use primary when activity is not reported per panel.
+        // iOS 27 adds uniqueId, so identity cannot determine the activity schema.
+        // Only identity-less reports may use displayId; never mix identity formats.
+        let legacyIdentity = !carriesLayoutActivity && records.allSatisfy { XPCValue.string($0, "uniqueId") == nil }
         var seen: Set<String> = []
         var displays: [Display] = []
         for record in records {
             let legacyID = XPCValue.number(record, "displayId").flatMap { $0 > 0 ? "display:\(Int($0))" : nil }
-            guard let uniqueID = XPCValue.string(record, "uniqueId") ?? (legacy ? legacyID : nil), !uniqueID.isEmpty,
+            guard let uniqueID = XPCValue.string(record, "uniqueId") ?? (legacyIdentity ? legacyID : nil), !uniqueID.isEmpty,
                   seen.insert(uniqueID).inserted else {
                 throw CoreSimulatorError.privateCall(symbol: "displayinfo", message: "a display has no identity of its own")
             }
             let integrated = XPCValue.dictionary(record, "type").map {
                 xpc_dictionary_get_value($0, "integrated") != nil
             } ?? false
-            let primary = XPCValue.bool(record, "primary") ?? false
-            let backlight = Backlight(rawValue: XPCValue.string(record, "backlightState") ??
-                                     (legacy && primary ? XPCValue.string(output, "backlightState") : nil) ?? "") ?? .unknown
             let isActive: Bool
             if carriesLayoutActivity {
                 // Layout is the authority when present; the backlight can lag it mid fold.
@@ -69,12 +67,13 @@ struct DisplayReport: Sendable {
                     throw CoreSimulatorError.privateCall(symbol: "displayinfo", message: "a display has no activity")
                 }
                 isActive = active
-            } else if legacy {
-                guard XPCValue.bool(record, "primary") != nil else {
-                    throw CoreSimulatorError.privateCall(symbol: "displayinfo", message: "a legacy display has no primary flag")
+            } else if !carriesPanelBacklight {
+                guard let primary = XPCValue.bool(record, "primary") else {
+                    throw CoreSimulatorError.privateCall(symbol: "displayinfo", message: "a display has no primary flag")
                 }
                 isActive = primary
             } else {
+                let backlight = Backlight(rawValue: XPCValue.string(record, "backlightState") ?? "") ?? .unknown
                 switch backlight {
                 case .activeOn, .activeDimmed: isActive = true
                 case .off, .inactiveOn: isActive = false
