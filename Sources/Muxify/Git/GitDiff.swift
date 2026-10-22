@@ -127,6 +127,14 @@ struct GitPatchFile: Equatable, Identifiable {
 
     var path: String { change == .deleted ? oldPath : newPath }
 
+    /// The line of the new file where its first change is, or 1.
+    var firstChangedLine: Int {
+        for hunk in hunks {
+            if let index = hunk.lines.firstIndex(where: { $0.kind == .added || $0.kind == .removed }) { return hunk.newLine(at: index) }
+        }
+        return 1
+    }
+
     fileprivate mutating func append(_ line: GitDiffLine) {
         hunks[hunks.count - 1].lines.append(line)
         if line.kind == .added { additions += 1 }
@@ -181,6 +189,15 @@ struct GitHunk: Equatable {
     var lines: [GitDiffLine] = []
     /// `context` with syntax colors, from `GitHighlighter`.
     var styledContext: AttributedString?
+
+    /// The line of the new file that the line at `index` is, or sits
+    /// beside: a removed line takes the next line that has a new number,
+    /// else the last one before it, else the hunk's start.
+    func newLine(at index: Int) -> Int {
+        guard lines.indices.contains(index) else { return max(newStart, 1) }
+        let beside = lines[index...].lazy.compactMap(\.new).first ?? lines[..<index].lazy.reversed().compactMap(\.new).first
+        return beside ?? max(newStart, 1)
+    }
 
     /// Side by side: each run of removed lines next to the added lines
     /// that follow it, the shorter side padded with blanks.

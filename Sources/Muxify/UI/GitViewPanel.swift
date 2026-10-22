@@ -2144,6 +2144,7 @@ private struct GitWriteErrorBanner: View {
                 .lineLimit(6)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("git-write-error")
             Button { gitView.dismissWriteError() } label: {
                 Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).frame(width: 18, height: 18)
             }

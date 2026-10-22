@@ -301,6 +301,8 @@ final class GitView {
         /// W: marks the commit, branch or stash selected as the base, or
         /// ends the comparison on the base, as lazygit's diffing mode.
         case mark
+        /// e: opens the file in the editor, at the line.
+        case edit
     }
 
     private(set) var isOpen = false
@@ -983,7 +985,7 @@ final class GitView {
             "shift+down": .extend(1), "shift+up": .extend(-1), "v": .range, "a": .hunk, "y": .copy, "cmd+c": .copy,
             "space": .toggle, "minus": .collapseAll, "equal": .expandAll,
             "c": .commit, "d": .discard, "slash": .filter, "escape": .back, "q": .close, "shift+r": .refresh,
-            "shift+w": .mark,
+            "shift+w": .mark, "e": .edit,
     ]
 
     static let commands: [KeyTrigger: Command] = Dictionary(uniqueKeysWithValues: keyMap.map { (try! KeyTrigger($0), $1) })
@@ -1078,6 +1080,57 @@ final class GitView {
         case .mark:
             guard let item = contentItem, item.sha != nil else { return }
             mark(item.id == base?.id ? nil : item)
+        case .edit:
+            openInEditor()
+        }
+    }
+
+    // MARK: Editing
+
+    /// The file `e` opens and the line: in the diff, the selection's first
+    /// line; in a list, a change's or a file's first changed line.
+    var editorTarget: (path: String, line: Int)? {
+        if focus == .diff {
+            guard let row = selectionBounds?.start.row, diffRows.indices.contains(row), diffRows[row].isLine,
+                  let fileID = diffRows[row].file, let hunkIndex = diffRows[row].hunk,
+                  let file = content?.patch.files.first(where: { $0.id == fileID }), file.hunks.indices.contains(hunkIndex)
+            else { return nil }
+            let hunk = file.hunks[hunkIndex]
+            switch diffRows[row].kind {
+            case .line:
+                return diffRows[row].lines.first.map { (file.path, hunk.newLine(at: $0)) }
+            case .pair(_, let new):
+                if let line = new?.new { return (file.path, line) }
+                return diffRows[row].lines.first.map { (file.path, hunk.newLine(at: $0)) }
+            default:
+                return nil
+            }
+        }
+        let path: String
+        switch selectedItem {
+        case .change(let change)?: path = change.path
+        case .file(let file)?: path = file
+        default: return nil
+        }
+        let file = content?.patch.files.first { $0.path == path }
+        return (path, file?.firstChangedLine ?? 1)
+    }
+
+    /// Opens the file in the editor, unless it's gone from the working tree.
+    func openInEditor() {
+        guard let store, let root = snapshot?.root, let target = editorTarget else { return }
+        writeError = nil
+        let file = (root as NSString).appendingPathComponent(target.path)
+        store.runGitScript("[ -e \"$1\" ] && echo present || echo missing", arguments: [file], timeout: 10) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let output) where output.contains("missing"):
+                self.writeError = "\(target.path) is no longer in the working tree."
+            case .success:
+                store.openInEditor(file: file, line: target.line, from: self.windowID, in: root)
+            case .failure(let error):
+                self.writeError = Self.message(for: error)
+            }
         }
     }
 

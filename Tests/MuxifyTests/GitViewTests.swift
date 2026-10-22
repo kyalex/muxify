@@ -46,6 +46,29 @@ final class GitViewConfigTests: XCTestCase {
         XCTAssertEqual(config.problems.last?.message, "unknown key \"git_view.theme\"")
     }
 
+    func testTheEditorCommandNamesTheFileAndMayNameTheLine() throws {
+        let config = try load("git_view:\n  editor: hx {file}:{line}")
+        XCTAssertEqual(config.gitView.editor, "hx {file}:{line}")
+        XCTAssertEqual(config.problems, [])
+        XCTAssertNil(try load("").gitView.editor)
+        let invalid = try load("git_view:\n  editor: nvim +{line}\n  display: popup")
+        XCTAssertNil(invalid.gitView.editor)
+        XCTAssertEqual(invalid.problems.map(\.line), [2])
+        XCTAssertEqual(invalid.problems.first?.message, "git_view.editor: expected a command with {file}, and {line} if it takes one")
+        XCTAssertNotNil(try load("git_view:\n  editor: \"\"").problems.first)
+    }
+
+    func testTheEditorCommandQuotesTheFileAndFillsTheLine() {
+        let custom = GitViewConfig(editor: "nvim +{line} {file} # {line}")
+        XCTAssertEqual(custom.editorCommand(file: "/r/a b.swift", line: 12), "nvim +12 '/r/a b.swift' # 12")
+        // A file name is data: neither its quotes nor a placeholder in it is read again.
+        XCTAssertEqual(custom.editorCommand(file: "/r/it's {line}", line: 3), "nvim +3 '/r/it'\"'\"'s {line}' # 3")
+        XCTAssertEqual(GitViewConfig(editor: "hx {file}:{line} {other}").editorCommand(file: "/r/a", line: 0), "hx '/r/a':1 {other}")
+        XCTAssertEqual(GitViewConfig().editorCommand(file: "/r/a b", line: 7), "${VISUAL:-${EDITOR:-vi}} +7 '/r/a b'")
+        XCTAssertEqual(GitViewConfig(editor: "code -g {file}:{line}").editorShellCommand(file: "/r/a", line: 2),
+                       "sh -c 'code -g '\"'\"'/r/a'\"'\"':2'")
+    }
+
     func testTheKeybindingCanBeRemappedOrDisabled() throws {
         let remapped = try load("keybindings:\n  toggle_git_view: [ctrl+g, cmd+shift+g]")
         XCTAssertEqual(remapped.keybinds.firstTrigger(for: .toggleGitView), trigger("ctrl+g"))
@@ -187,6 +210,23 @@ final class GitPatchTests: XCTestCase {
     new file mode 100644
     Binary files /dev/null and b/icon.png differ
     """
+
+    func testARemovedLineOpensAtTheNewLineBesideIt() throws {
+        let file = try XCTUnwrap(GitPatch.parse(diff).files.first)
+        // context 16, removed, added 17, added 18, context 19
+        XCTAssertEqual(file.hunks[0].newLine(at: 0), 16)
+        XCTAssertEqual(file.hunks[0].newLine(at: 1), 17)
+        XCTAssertEqual(file.hunks[0].newLine(at: 3), 18)
+        XCTAssertEqual(file.firstChangedLine, 17)
+        // A run of removed lines at the end of a hunk takes the last line before it.
+        let tail = try XCTUnwrap(GitPatch.parse("diff --git a/t b/t\n--- a/t\n+++ b/t\n@@ -5,3 +5,1 @@\n keep\n-gone\n-gone too\n").files.first)
+        XCTAssertEqual(tail.hunks[0].newLine(at: 2), 5)
+        XCTAssertEqual(tail.firstChangedLine, 5)
+        // All removed: the hunk's start.
+        let removed = try XCTUnwrap(GitPatch.parse("diff --git a/t b/t\n--- a/t\n+++ b/t\n@@ -1,2 +0,0 @@\n-a\n-b\n").files.first)
+        XCTAssertEqual(removed.firstChangedLine, 1)
+        XCTAssertEqual(GitPatch.parse(diff).files[2].firstChangedLine, 1)
+    }
 
     func testFilesHunksAndLineNumbers() throws {
         let patch = GitPatch.parse(diff)

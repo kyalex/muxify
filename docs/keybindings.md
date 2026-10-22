@@ -424,6 +424,7 @@ go on to the actions above.
 | ⌥↓ / ⌥↑ | Next or previous hunk |
 | ] / [ | Next or previous file: the next file in Changes or Diff files, or the next file in a commit's, stash's or comparison's diff |
 | / | Filter the list shown; ↓ / ↑ move through the matches, ↩ or ⎋ go back to the list |
+| e | Open the file in your editor (`git_view.editor`) in a new tmux Window, at the cursor's line in the diff, or at the first changed line of a change or Diff files file; a removed line opens at the new line beside it |
 | R | Read the repository again |
 | W | Mark the selected commit, branch or stash as the base: every other commit, branch or stash selected then shows the diff from the base to it, as lazygit's diffing mode. W on another one moves the base there; W on the base ends the comparison |
 | ⎋ | Clear the selected range, leave the diff, clear the filter, go back out of Diff files or a branch's commits, end the comparison, then close the Git View |

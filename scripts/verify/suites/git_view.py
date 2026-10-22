@@ -27,13 +27,16 @@ Accessibility identifiers of the Git View, for the suites that follow this one:
                              `kind=<context|added|removed|note> old=<number|-> new=<number|->`, then
                              ` marks=<start>..<<end>,...` when it has changed words: their columns in the
                              code as shown, tabs expanded to the next multiple of 4
+    git-write-error          the banner of a failed write or of an `e` that found its file gone; its value is the message
 The diff pane builds only the lines on screen, so keep a fixture's diffs short.
 
 Run from the repo root after `make build`:
     python3 -m unittest -v scripts.verify.suites.git_view
 """
 
+import json
 import re
+import shlex
 import subprocess
 import unittest
 
@@ -77,6 +80,10 @@ class GitView(unittest.TestCase):
         (cls.repo/'new.txt').write_text('new file\n')
         cls.session = s.tmux('new-session', '-d', '-P', '-F', '#{session_id}', '-s', 'gv-fixture', '-c', str(cls.repo), SHELL)
         cls.window = s.tmux('display-message', '-p', '-t', cls.session + ':', '#{window_id}')
+        # The editor writes its file and line to a file, then stays, as a real editor would.
+        cls.editor_out = s.root/'editor.out'
+        command = "printf '%s\\n%s\\n' {file} {line} > " + shlex.quote(str(cls.editor_out)) + '; sleep 60'
+        (s.root/'config/muxify/config.yaml').write_text('git_view:\n  editor: ' + json.dumps(command) + '\n')
         s.launch(LAUNCH_ARGS)
         s.wait_shown(cls.window)
 
@@ -264,6 +271,68 @@ class GitView(unittest.TestCase):
         self.open_git_view()
         rs = self.s.rows()
         self.assertIsNone(self.comparing(rs), 'the comparison outlived closing the Git View')
+
+    def windows(self):
+        return set(self.s.tmux('list-windows', '-t', self.session + ':', '-F', '#{window_id}').split())
+
+    def press_e(self):
+        """Performs e, and returns the Window it opened and the file and line the editor command got. The app
+        switches to the new Window."""
+        self.editor_out.unlink(missing_ok=True)
+        before = self.windows()
+        self.key('e')
+        wait(lambda: self.windows() - before, 'e did not open a Window', seconds=10)
+        (new,) = self.windows() - before
+        self.s.wait_shown(new)
+        wait(self.editor_out.exists, 'the editor command did not run', seconds=10)
+        file, line = self.editor_out.read_text().split('\n')[:2]
+        self.assertEqual(self.s.tmux('display-message', '-p', '-t', new, '#{session_id}'), self.session, 'e opened a Window in another Session')
+        self.assertEqual(self.s.tmux('display-message', '-p', '-t', new, '#{pane_current_path}'), str(self.repo.resolve()),
+                         'the editor does not run in the repository root')
+        return new, file, int(line)
+
+    def leave(self, new):
+        """Closes the editor's Window and goes back to the one with the Git View, which is as it was left."""
+        self.s.tmux('kill-window', '-t', new)
+        self.s.tmux('select-window', '-t', self.window)
+        self.s.wait_shown(self.window)
+        self.assertTrue(self.is_open(), 'the Git View did not stay open in the Window it was left in')
+
+    def test_e_in_a_list_opens_the_files_first_changed_line_in_a_new_window(self):
+        self.select_change('tracked.txt')
+        new, file, line = self.press_e()
+        self.assertEqual(file, str(self.repo.resolve()/'tracked.txt'))
+        self.assertEqual(line, 2, 'the first changed line is 2')
+        self.assertFalse(self.is_open(), 'the new Window shows a Git View')
+        self.leave(new)
+
+    def test_e_in_the_diff_opens_the_line_under_the_cursor_and_a_removed_line_the_new_line_beside_it(self):
+        self.select_change('tracked.txt')
+        self.key('enter')
+        # The cursor starts on the first change: the removed line, beside new line 2.
+        self.s.wait_rows(lambda rs: any(r.get('accessibilityLabel') == 'tracked added line' for r in rs), 'the diff does not show')
+        new, file, line = self.press_e()
+        self.assertEqual((file, line), (str(self.repo.resolve()/'tracked.txt'), 2), 'a removed line does not open beside it')
+        self.leave(new)
+        self.key('j')
+        self.key('j')
+        new, file, line = self.press_e()
+        self.assertEqual((file, line), (str(self.repo.resolve()/'tracked.txt'), 3), 'the added line does not open at its number')
+        self.leave(new)
+
+    def test_e_on_a_file_that_is_gone_says_so_and_opens_nothing(self):
+        self.select_row('git-row-change:new.txt')
+        (self.repo/'new.txt').rename(self.repo/'moved.txt')
+        try:
+            before = self.windows()
+            self.editor_out.unlink(missing_ok=True)
+            self.key('e')
+            rs = self.s.wait_rows(lambda rs: self.s.has('git-write-error', rs), 'the Git View did not say the file is gone')
+            self.assertIn('new.txt', self.s.row('git-write-error', rs).get('accessibilityValue', ''))
+            self.assertEqual(self.windows(), before, 'e opened a Window for a missing file')
+            self.assertFalse(self.editor_out.exists(), 'the editor ran')
+        finally:
+            (self.repo/'moved.txt').rename(self.repo/'new.txt')
 
     def test_q_closes_the_git_view(self):
         self.assertTrue(self.is_open(), 'the Git View is not open')

@@ -398,6 +398,16 @@ note instead, and Changes show their own diff. W on another one moves the base
 there; W on the base ends the comparison, and so do ⎋ where it would close the
 Git View, and closing the Git View. When git fails, the diff pane says why.
 
+e opens the file in your editor, in a new tmux Window of the current Session, and
+switches to it; the Git View stays open in the Window you left, as you left it.
+In the diff, it opens the file of the cursor's line, or of the selection's first
+line, at that line's number in the new file; a removed line opens at the new line
+beside it. In a list, a change or a file of the Diff files opens at its first
+changed line. A folder, a commit, a branch or a stash does nothing. The file is
+the one in the working tree, also for a commit's, a stash's or a comparison's
+files; when it is no longer there, the Git View says so and opens nothing. tmux
+runs the editor, so on a Remote Environment it opens that machine's file.
+
 As in lazygit, space in Changes stages the file or folder, or unstages it once
 all of it is staged, and a stages or unstages everything; a click on a file's
 letters does the same. d asks, as lazygit does, whether to discard all of a
@@ -438,13 +448,18 @@ git_view:
   display: popup      # or fullscreen
   width: 80%
   height: 80%
+  editor: nvim +{line} {file}   # without it: ${VISUAL:-${EDITOR:-vi}} +{line} {file}
 ```
 
-These are the defaults. `popup` floats over the whole App Window, Sidebar and
+The sizes are the defaults. `popup` floats over the whole App Window, Sidebar and
 Browser too, like `tmux display-popup -w 80% -h 80%`; `width` and `height` are
 its share of the App Window, from 10% to 100% (`80` means `80%`). `fullscreen`
-takes the terminal's place, leaving the Sidebar and Browser. Changes apply live; invalid
-values use the defaults and appear in the Config problems banner.
+takes the terminal's place, leaving the Sidebar and Browser. `editor` is the
+shell command that e runs, in the repository's root folder, such as
+`hx {file}:{line}`. It must name `{file}`; `{line}` is the line number. Both are
+filled in for you, and `{file}` is the file's absolute path, shell-quoted.
+Without `editor`, e runs `${VISUAL:-${EDITOR:-vi}} +{line} {file}`. Changes apply
+live; invalid values use the defaults and appear in the Config problems banner.
 
 The Git View reads the repository when it opens, every 10 seconds, when Muxify
 comes to the front, with R, and after you stage or commit. On a Remote
