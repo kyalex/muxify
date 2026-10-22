@@ -1,5 +1,5 @@
 """The Go to… Command Palette with its topics and sessions Sources, what ↩ and the row actions do on a
-Topic, Settled, Session or Project row, and Move, which uses the palette's view.
+Topic, Settled, Session or Session Path row, and Move, which uses the palette's view.
 
 The driver cannot type keys, so a check opens a palette from its View menu item, closes it with the
 search field's Close accessibility action, and runs New Session, Paste Path and Snooze through the row's
@@ -17,6 +17,7 @@ import time
 import unittest
 
 from scripts.verify.sandbox import Sandbox, frame, remove_topic, wait
+from scripts.verify.topics_sidebar import remembered_session
 
 # The app reads tmux once per second; a visit is recorded when it sees the client move.
 REFRESH_LIMIT = 2.0
@@ -38,7 +39,8 @@ class CommandPalette(unittest.TestCase):
         cls.delta = s.root/'projects/delta'
         for directory in [cls.topics_dir, cls.alpha, cls.beta, cls.delta]:
             directory.mkdir(parents=True, exist_ok=True)
-        git = ['/usr/bin/git', '-C', str(cls.alpha), '-c', 'user.name=Verifier', '-c', 'user.email=verifier@example.invalid']
+        git = ['/usr/bin/git', '-C', str(cls.alpha), '-c', 'user.name=Verifier', '-c', 'user.email=verifier@example.invalid',
+               '-c', 'commit.gpgSign=false']
         subprocess.run(['/usr/bin/git', 'init', '-q', '-b', 'main', str(cls.alpha)], check=True)
         (cls.alpha/'README').write_text('alpha\n')
         subprocess.run(git + ['add', 'README'], check=True)
@@ -59,6 +61,8 @@ class CommandPalette(unittest.TestCase):
 
     def new_session(self, name, directory, topic=None, command=SHELL):
         sid = self.s.tmux('new-session', '-d', '-P', '-F', '#{session_id}', '-s', name, '-c', str(directory), command)
+        self.addCleanup(self.s.tmux_ok, 'kill-session', '-t', sid)
+        self.addCleanup(self.select_window, self.base_window)
         if topic:
             self.s.tmux('set-option', '-t', sid, '@muxify_topic', topic)
         return sid
@@ -67,7 +71,7 @@ class CommandPalette(unittest.TestCase):
         """A Topic file as a person writes one. Reopen names the Session after the title's slug, so a title
         such as "Sw dormant" for id sw-dormant keeps the Session name predictable."""
         with open(self.topics_dir/(topic_id + '.json'), 'w') as handle:
-            handle.write(json.dumps(dict(id=topic_id, title=title, slug=topic_id, home_project=str(home), **fields)))
+            handle.write(json.dumps(dict(id=topic_id, title=title, slug=topic_id, **fields)))
 
     def records(self):
         out = {}
@@ -155,7 +159,7 @@ class CommandPalette(unittest.TestCase):
 
     def test_return_on_a_dormant_topic_reopens_it_and_goes_there(self):
         self.write_topic('sw-dormant', 'Sw dormant', self.beta,
-                         sessions=[dict(project_path=str(self.beta), windows=[dict(directory=str(self.beta), name='shell')])])
+                         sessions=[remembered_session(self.beta, 'sw-dormant', windows=[dict(directory=str(self.beta), name='shell')])])
         rs = self.open_palette()
         key = 'palette-row-topic-sw-dormant'
         rs = self.s.wait_rows(lambda rs: self.s.has(key, rs), 'Dormant Topic row did not show')
@@ -185,7 +189,7 @@ class CommandPalette(unittest.TestCase):
 
     def test_return_on_a_dormant_snoozed_topic_reopens_it_and_keeps_the_snooze(self):
         self.write_topic('sw-snoozed-dormant', 'Sw snoozed dormant', self.beta, snoozed_until='never',
-                         sessions=[dict(project_path=str(self.beta), windows=[dict(directory=str(self.beta), name='shell')])])
+                         sessions=[remembered_session(self.beta, 'sw-snoozed-dormant', windows=[dict(directory=str(self.beta), name='shell')])])
         key = 'palette-row-topic-sw-snoozed-dormant'
         self.open_palette()
         rs = self.search('snoozed dormant', key)
@@ -197,7 +201,7 @@ class CommandPalette(unittest.TestCase):
 
     def test_typing_sett_finds_a_settled_topic_by_its_outcome_and_return_shows_its_reopen_choice(self):
         self.write_topic('sw-settled', 'Sw settled', self.alpha, settled_at='2031-01-01T10:00:00Z', outcome='Shipped proof',
-                         sessions=[dict(project_path=str(self.alpha), windows=[dict(directory=str(self.alpha), name='shell')])])
+                         sessions=[remembered_session(self.alpha, 'sw-settled', windows=[dict(directory=str(self.alpha), name='shell')])])
         key = 'palette-row-topic-sw-settled'
         self.open_palette()
         rs = self.search('sett proof', key)
@@ -211,7 +215,7 @@ class CommandPalette(unittest.TestCase):
         wait(lambda: 'settled_at' not in self.records().get('sw-settled', {'settled_at': 1}), 'Reopen did not clear settled_at', seconds=15)
         wait(lambda: 'alpha/sw-settled' in self.client_sessions(), 'the client did not go to the reopened Session', seconds=10)
 
-    def test_return_on_a_project_row_without_a_session_opens_one_in_no_topic_and_then_the_same_row_goes_to_it(self):
+    def test_launch_row_opens_exact_name_and_is_replaced_by_its_running_session_row(self):
         key = self.project_row(self.gamma/'release')
         self.open_palette()
         rs = self.search('gamma/rel', key)
@@ -222,34 +226,37 @@ class CommandPalette(unittest.TestCase):
         self.assertEqual(self.s.tmux('show-options', '-qv', '-t', '=gamma/release', '@muxify_topic'), '', 'the Session is not in No Topic')
         self.s.wait_rows(lambda rs: not self.s.has('palette-search', rs), 'the palette did not close after open')
         sid = self.s.tmux('display-message', '-p', '-t', '=gamma/release:', '#{session_id}')
+        self.addCleanup(self.s.tmux_ok, 'kill-session', '-t', sid)
+        self.addCleanup(self.select_window, self.base_window)
 
         self.select_window(self.base_window)
         self.open_palette()
-        rs = self.search('gamma/rel', key)
-        self.assertFalse(self.s.has(self.session_row(sid), rs), 'a Session in a Project has a row of its own')
-        self.assertNotIn('↩ open', self.describe(key, rs), 'the Project row still offers open while its Session runs')
-        self.s.act('press', key)
+        rs = self.search('gamma/rel', self.session_row(sid))
+        self.assertFalse(self.s.has(key, rs), 'an exact running name must suppress its launch row')
+        self.s.act('press', self.session_row(sid))
         wait(lambda: 'gamma/release' in self.client_sessions(), 'the client did not go back to the Session', seconds=10)
         time.sleep(REFRESH_LIMIT)
         names = [name for name in self.s.tmux('list-sessions', '-F', '#{session_name}').split() if name.startswith('gamma/release')]
         self.assertEqual(names, ['gamma/release'], 'a second press made another Session')
 
-    def test_new_session_on_a_project_row_with_a_session_starts_a_second_one_in_no_topic_and_goes_to_it(self):
-        self.new_session('gamma/main', self.gamma/'main')
-        key = self.project_row(self.gamma/'main')
+    def test_new_session_on_a_running_session_row_creates_another_in_no_topic(self):
+        sid = self.new_session('gamma/main', self.gamma/'main')
+        key = self.session_row(sid)
         self.open_palette()
         rs = self.search('gamma/main', key)
-        self.assertNotIn('↩ open', self.describe(key, rs), 'the Project row does not hold its running Session')
+        self.assertFalse(self.s.has(self.project_row(self.gamma/'main'), rs), 'the exact name still offers a launch row')
         self.s.act('action', key, 'New Session')
-        wait(lambda: self.s.tmux_ok('has-session', '-t', '=gamma/main-2').returncode == 0, 'no Session gamma/main-2 was created', seconds=10)
-        wait(lambda: 'gamma/main-2' in self.client_sessions(), 'the client did not go to the new Session', seconds=10)
+        wait(lambda: self.s.tmux_ok('has-session', '-t', '=gamma/main+2').returncode == 0, 'no Session gamma/main+2 was created', seconds=10)
+        self.addCleanup(self.s.tmux_ok, 'kill-session', '-t', '=gamma/main+2')
+        self.addCleanup(self.select_window, self.base_window)
+        wait(lambda: 'gamma/main+2' in self.client_sessions(), 'the client did not go to the new Session', seconds=10)
         self.s.wait_rows(lambda rs: not self.s.has('palette-search', rs), 'the palette did not close after New Session')
-        self.assertEqual(self.s.tmux('show-options', '-qv', '-t', '=gamma/main-2', '@muxify_topic'), '', 'the Session is not in No Topic')
-        path = self.s.tmux('display-message', '-p', '-t', '=gamma/main-2:', '#{pane_current_path}')
+        self.assertEqual(self.s.tmux('show-options', '-qv', '-t', '=gamma/main+2', '@muxify_topic'), '', 'the Session is not in No Topic')
+        path = self.s.tmux('display-message', '-p', '-t', '=gamma/main+2:', '#{pane_current_path}')
         self.assertEqual(os.path.realpath(path), os.path.realpath(self.gamma/'main'), 'the new Session did not start in the Worktree')
         time.sleep(REFRESH_LIMIT)
         names = sorted(name for name in self.s.tmux('list-sessions', '-F', '#{session_name}').split() if name.startswith('gamma/main'))
-        self.assertEqual(names, ['gamma/main', 'gamma/main-2'], 'New Session did not start exactly one more Session')
+        self.assertEqual(names, ['gamma/main', 'gamma/main+2'], 'New Session did not start exactly one more Session')
 
     def test_a_project_alias_names_the_row_typing_alias_or_folder_finds_it_and_its_session_keeps_the_folder_name(self):
         key = self.project_row(self.delta)
@@ -260,6 +267,8 @@ class CommandPalette(unittest.TestCase):
         self.assertIn('Delta Notes', self.describe(key, rs), 'typing the folder name does not find the aliased row')
         self.s.act('press', key)
         wait(lambda: self.s.tmux_ok('has-session', '-t', '=delta').returncode == 0, 'no Session delta was created', seconds=10)
+        self.addCleanup(self.s.tmux_ok, 'kill-session', '-t', '=delta')
+        self.addCleanup(self.select_window, self.base_window)
         names = self.s.tmux('list-sessions', '-F', '#{session_name}').splitlines()
         self.assertNotIn('Delta Notes', names, 'the alias named a tmux Session')
         self.s.wait_rows(lambda rs: not self.s.has('palette-search', rs), 'the palette did not close after open')
@@ -325,7 +334,7 @@ class CommandPalette(unittest.TestCase):
         self.show_view('sessions')
         self.open_palette()
         rs = self.search('sw-join', self.project_row(self.alpha))
-        self.assertFalse(self.s.has(self.session_row(sid), rs), 'a Session in a Project has a row of its own')
+        self.assertFalse(self.s.has(self.session_row(sid), rs), 'a Session in a Session Path has a row of its own')
         self.s.act('press', self.project_row(self.alpha))
         wait(lambda: window in self.client_windows(), 'the client did not go into the Topic Session', seconds=10)
 
@@ -381,19 +390,30 @@ class CommandPalette(unittest.TestCase):
         wait(lambda: self.s.driver('press', 'Move Session…')['pressed'], 'the menu item did not come back', seconds=10)
         self.close_palette()
 
-    def test_the_palette_opens_with_the_active_topic_first_under_the_cursor(self):
+    def test_topic_palette_ranks_other_live_topics_by_visits_then_current_then_dormant_and_empty(self):
         windows = {}
-        for name in ['sw-previous', 'sw-current']:
-            self.write_topic(name, 'Sw ' + name[3:], self.beta)
+        for name in ['sw-order-older', 'sw-order-recent', 'sw-order-current']:
+            self.addCleanup(remove_topic, self.topics_dir/(name + '.json'))
+            self.write_topic(name, 'Sw ' + name[3:], self.beta, pinned=name != 'sw-order-recent')
             windows[name] = self.window_of(self.new_session('beta/' + name, self.beta, topic=name))
-        self.select_window(windows['sw-previous'])
-        self.select_window(windows['sw-current'])
-        rs = self.open_palette()
-        key = 'palette-row-topic-sw-current'
-        rs = self.s.wait_rows(lambda rs: self.s.has(key, rs) and self.s.has('palette-row-topic-sw-previous', rs), 'the Topics did not show')
-        listed = [k for k in self.s.ids(rs) if k.startswith('palette-row-topic-')]
-        self.assertEqual(listed[0], key, 'the Active Topic is not first: %s' % listed)
-        self.assertEqual(self.s.row(key, rs).get('accessibilityValue'), 'selected', self.describe(key, rs))
+        dormant, empty = 'sw-order-dormant', 'sw-order-empty-topic'
+        for name in [dormant, empty]:
+            self.addCleanup(remove_topic, self.topics_dir/(name + '.json'))
+        self.write_topic(dormant, 'Sw order dormant', self.beta, pinned=True,
+                         sessions=[remembered_session(self.beta, dormant, windows=[dict(directory=str(self.beta), name='shell')])])
+        self.write_topic(empty, 'Sw order empty', self.beta)
+        for name in ['sw-order-older', 'sw-order-recent', 'sw-order-current']:
+            self.select_window(windows[name])
+        self.addCleanup(self.close_palette)
+        self.open_palette()
+        self.s.wait_rows(lambda rs: self.s.has('palette-row-topic-sw-order-recent', rs), 'recent Topic row did not show')
+        listed = self.palette_order()
+        expected = ['palette-row-topic-' + name for name in ['sw-order-recent', 'sw-order-older', 'sw-order-current']]
+        self.assertEqual([key for key in listed if key in expected], expected, listed)
+        for name in [dormant, empty]:
+            self.assertGreater(listed.index('palette-row-topic-' + name), listed.index(expected[-1]), listed)
+        self.s.reveal(expected[0])
+        self.assertEqual(self.s.row(expected[0]).get('accessibilityValue'), 'selected', 'the most recent other Topic should be under the cursor')
         self.close_palette()
 
     def test_no_topic_has_no_row_and_a_no_topic_session_has_a_session_row(self):
@@ -509,20 +529,19 @@ class CommandPalette(unittest.TestCase):
         self.assertEqual(self.s.row(key, rs)['accessibilityLabel'].count('done'), 1, 'the Status shows as text too: ' + self.describe(key, rs))
         self.close_palette()
 
-    def test_add_project_menu_item_opens_the_palette_for_the_selected_windows_topic(self):
-        self.write_topic('sw-add-menu', 'Sw add menu', self.beta, created_at='2026-10-07T00:00:00Z',
-                         sessions=[dict(project_path=str(self.beta))])
+    def test_add_session_menu_item_opens_the_palette_for_the_selected_windows_topic(self):
+        self.write_topic('sw-add-menu', 'Sw add menu', self.beta, created_at='2026-10-07T00:00:00Z')
         sid = self.new_session('beta/sw-add-menu', self.beta, topic='sw-add-menu')
         self.select_window(self.window_of(sid))
         self.addCleanup(lambda: self.s.has('palette-accept') and self.s.act('press', 'palette-cancel'))
         # The menu follows the selected Window about a second later; a press that lands earlier does nothing.
-        wait(lambda: self.s.driver('press', 'Add a Project to Topic…')['pressed'], 'the menu item stays disabled', seconds=10)
-        rs = self.s.wait_rows(lambda rs: self.s.has('palette-accept', rs), 'the Add a Project palette did not open')
-        self.assertTrue(any('Sw add menu › Add a Project' in row.get('accessibilityValue', '') + row.get('accessibilityLabel', '')
+        wait(lambda: self.s.driver('press', 'Add a Session to Topic…')['pressed'], 'the menu item stays disabled', seconds=10)
+        rs = self.s.wait_rows(lambda rs: self.s.has('palette-accept', rs), 'the Add a Session Path palette did not open')
+        self.assertTrue(any('Sw add menu › Add a Session' in row.get('accessibilityValue', '') + row.get('accessibilityLabel', '')
                             for row in rs if row.get('accessibilityRole') == 'AXStaticText'),
                         'the palette does not name the selected Window\'s Topic')
         self.s.act('press', 'palette-cancel')
-        self.s.wait_rows(lambda rs: not self.s.has('palette-accept', rs), 'the Add a Project palette did not close')
+        self.s.wait_rows(lambda rs: not self.s.has('palette-accept', rs), 'the Add a Session Path palette did not close')
 
     def test_visit_order_survives_an_app_restart(self):
         windows = {}

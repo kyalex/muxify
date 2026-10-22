@@ -8,8 +8,8 @@ final class PickListTests: XCTestCase {
     }
 
     private func list(_ candidates: [PickCandidate<String>], _ query: String, rule: SectionRule = .ranked(showsWhenEmpty: true),
-                      title: String? = nil) -> PickList<String> {
-        FuzzyRanker.list([PickSectionInput(id: "s", title: title, rule: rule, candidates: candidates)], query: FuzzyQuery(query))
+                       title: String? = nil, currentLast: Bool = false) -> PickList<String> {
+        FuzzyRanker.list([PickSectionInput(id: "s", title: title, rule: rule, candidates: candidates, currentLast: currentLast)], query: FuzzyQuery(query))
     }
 
     func testEachWordTakesItsBestFieldAndTheTitleWinsATie() throws {
@@ -47,6 +47,13 @@ final class PickListTests: XCTestCase {
         XCTAssertEqual(list(candidates, "beta").rows.map(\.id), ["other"])
     }
 
+    func testCurrentUnopenedTopicAppearsOnlyOnceAfterLiveTopics() {
+        var empty = candidate("empty", "Empty", visit: 30, current: true)
+        empty.unopened = true
+        let candidates = [empty, candidate("live", "Live", visit: 10)]
+        XCTAssertEqual(list(candidates, "", currentLast: true).rows.map(\.id), ["live", "empty"])
+    }
+
     func testPinnedRowsGoFirstInCandidateOrderOnlyWhenNothingIsTyped() {
         var first = candidate("first-pin", "alpha pin", visit: 10), second = candidate("second-pin", "beta pin", visit: 30)
         first.isPinned = true
@@ -58,10 +65,10 @@ final class PickListTests: XCTestCase {
     }
 
     func testSectionsHideOnAnEmptyQueryOrStayFixedAndEmptyOnesDropOut() {
-        let hidden = list([candidate("a", "alpha")], "", rule: .ranked(showsWhenEmpty: false), title: "Projects")
+        let hidden = list([candidate("a", "alpha")], "", rule: .ranked(showsWhenEmpty: false), title: "SessionPaths")
         XCTAssertEqual(hidden.sections, [])
-        let shown = list([candidate("a", "alpha")], "al", rule: .ranked(showsWhenEmpty: false), title: "Projects")
-        XCTAssertEqual(shown.sections.map(\.title), ["Projects"])
+        let shown = list([candidate("a", "alpha")], "al", rule: .ranked(showsWhenEmpty: false), title: "SessionPaths")
+        XCTAssertEqual(shown.sections.map(\.title), ["SessionPaths"])
         let fixed = list([candidate("new", "New Topic"), candidate("b", "beta", current: true)], "zzz", rule: .fixed)
         XCTAssertEqual(fixed.rows.map(\.id), ["new", "b"], "a fixed section is neither filtered nor sorted")
         XCTAssertEqual(list([candidate("a", "alpha")], "zzz").sections, [])
