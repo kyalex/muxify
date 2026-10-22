@@ -39,7 +39,10 @@ struct GitPatch: Equatable {
         var new = 0
         var lineCount = 0
         func finish() {
-            if let file { patch.files.append(file) }
+            if var file {
+                for hunk in file.hunks.indices { GitWordDiff.mark(&file.hunks[hunk].lines) }
+                patch.files.append(file)
+            }
             file = nil
         }
         for line in output.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -297,8 +300,12 @@ struct GitDiffLine: Equatable {
     /// `text` as shown: tabs as spaces to the next multiple of 4, so each
     /// character is a column.
     let shown: String
-    /// `shown` with syntax colors, from `GitHighlighter`.
+    /// `shown` with syntax colors and changed words marked, from
+    /// `GitHighlighter`.
     var styled: AttributedString?
+    /// The columns of `shown` that changed from the line it pairs with, from
+    /// `GitWordDiff`.
+    var marks: [Range<Int>] = []
 
     init(kind: Kind, old: Int?, new: Int?, text: String) {
         self.kind = kind

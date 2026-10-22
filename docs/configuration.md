@@ -384,6 +384,20 @@ View opens on Changes every time; the other Git View tabs are kept as you left
 them, each with its own filter, and clicking the one shown goes back to its own
 list. The Git View tabs count the changes and stashes.
 
+W compares two commits, branches or stashes, as lazygit's diffing mode does. W
+on a commit (in the History or a branch's commits), a branch (in the Branches)
+or a stash marks it as the base: its row shows a "base" mark, and the toolbar
+shows "Comparing main", or "main → 1a2b3c4" while another one is selected. Any
+other commit, branch or stash you select then shows the diff from the base to it
+(`git diff <base> <selection>`, renames found), in any Git View tab: mark `main`
+in the Branches and select a commit in the History. A card names both ends and
+the totals, and the comparison's Diff files are under the selection, as a
+commit's are: ↩ goes into them, also on a branch. A branch is read at the commit
+it's at; when it moves, the comparison follows it. Selected, the base shows a
+note instead, and Changes show their own diff. W on another one moves the base
+there; W on the base ends the comparison, and so do ⎋ where it would close the
+Git View, and closing the Git View. When git fails, the diff pane says why.
+
 As in lazygit, space in Changes stages the file or folder, or unstages it once
 all of it is staged, and a stages or unstages everything; a click on a file's
 letters does the same. d asks, as lazygit does, whether to discard all of a
@@ -408,7 +422,12 @@ what it said.
 
 Diffs have line numbers, syntax highlighting, and the enclosing function in each
 hunk's header. The toolbar switches them between Unified and Split (side by
-side); the choice is remembered. A change's hunk headers show the whole file.
+side); the choice is remembered. In a changed line, the words that changed are
+marked with a stronger band than the line's, on both the removed line and the
+added line it pairs with, as GitHub and delta do: a run of removed lines pairs
+in order with the added lines right after it. A line with no pair, a pair
+rewritten more than it's kept, a line over 1,000 characters and a block of over
+100 lines show only the line's band. A change's hunk headers show the whole file.
 Long lines wrap at the pane's edge. Drag over code to select words or any
 part of it, double-click a word, triple-click or drag the line numbers for whole
 lines, or use the keys; ⌘C or y copies the code. The filter field (/) narrows
