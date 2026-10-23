@@ -13,7 +13,7 @@ import time
 import unittest
 
 from scripts.verify.sandbox import wait
-from scripts.verify.topics_sidebar import TopicsSidebar
+from scripts.verify.topics_sidebar import TopicsSidebar, remembered_session
 
 
 class TopicsGroupsSidebar(TopicsSidebar):
@@ -67,10 +67,11 @@ class TopicsGroupsSidebar(TopicsSidebar):
         latency, rs = self.rows_until(lambda rs: self.grouped('topic-group-snoozed', 'snoozed-topics', rs))
         self.assertIsNotNone(latency, 'Topic is not in the Snoozed group; Topic rows %s' % self.topic_rows(rs))
         self.assertIn('never', self.describe('topic-group-snoozed', rs), 'row does not show its wake time')
-        # The app reads the Topic file within a quarter second and tmux once per second, so the row can show before
-        # the app has seen the Session.
-        latency, rs = self.rows_until(lambda rs: 'Dormant' not in self.describe('topic-group-snoozed', rs), seconds=5)
-        self.assertIsNotNone(latency, 'a Topic with a live Session is Dormant: ' + self.describe('topic-group-snoozed', rs))
+        # The app reads the Topic file within a quarter second and tmux once per second, so the row can say Empty
+        # before the app has seen the Session. A press on an Empty card shows the empty-Topic view in place of the
+        # Window; the Session that then shows ends that view, and the Snoozed group closes with it.
+        latency, rs = self.rows_until(lambda rs: 'Empty' not in self.describe('topic-group-snoozed', rs), seconds=5)
+        self.assertIsNotNone(latency, 'a Topic with a live Session says Empty: ' + self.describe('topic-group-snoozed', rs))
 
         self.expand('topic-group-snoozed')
         self.s.wait_rows(lambda rs: self.s.has('topic-window-' + window, rs), 'snoozed Topic does not list its live Window')
@@ -172,7 +173,7 @@ class TopicsGroupsSidebar(TopicsSidebar):
 
     def test_a_click_on_a_closed_settled_card_shows_its_reopen_choice_and_reopens_nothing(self):
         self.write_topic('click-settled', 'Click settled', self.alpha, settled_at='2031-01-02T10:00:00Z',
-                         sessions=[dict(project_path=str(self.alpha), windows=[dict(directory=str(self.alpha), name='shell')])])
+                         sessions=[remembered_session(self.alpha, 'click-settled', windows=[dict(directory=str(self.alpha), name='shell')])])
         self.expand('settled-topics')
         rs = self.s.wait_rows(lambda rs: self.grouped('topic-click-settled', 'settled-topics', rs), 'the Topic is not in the Settled group')
         self.assertFalse(self.expanded('topic-click-settled', rs), 'a Settled card starts open')
@@ -193,7 +194,11 @@ class TopicsGroupsSidebar(TopicsSidebar):
         for number in range(17):
             self.write_topic('page-%02d' % number, 'Page %02d' % number, self.beta, settled_at='2030-01-%02dT00:00:00Z' % (number + 1))
         self.addCleanup(self.collapse, 'settled-topics')
-        self.s.wait_rows(lambda rs: self.s.has('topic-above-24', rs) or self.s.has('topic-above-00', rs), 'no open Topic rows')
+        # The app reads the Topic files once per quarter second, so one read can see the open Topics and not yet the
+        # Settled ones. Wait for the Settled header's count before the first reveal, which does not wait.
+        self.s.wait_rows(lambda rs: (self.s.has('topic-above-24', rs) or self.s.has('topic-above-00', rs))
+                         and '(17)' in self.s.row('settled-topics', rs).get('accessibilityLabel', ''),
+                         'the Sidebar does not show the open Topics and the 17 Settled Topics')
         self.s.reveal('settled-topics')
         self.collapse('settled-topics')
         self.expand('settled-topics')
